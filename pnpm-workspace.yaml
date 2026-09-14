@@ -1,10 +1,10 @@
 packages:
   - "."
 overrides:
-  "@nuxt-tmpl/nuxt": "0.2.0"
-  "@nuxt-tmpl/core": "0.2.0"
-  "@ipa-vue/core": "0.3.1"
-  "@ipa-vue/element-plus": "0.1.0"
+  "@nuxt-tmpl/nuxt": "0.2.4"
+  "@nuxt-tmpl/core": "0.2.1"
+  "@ipa-vue/core": "0.3.5"
+  "@ipa-vue/element-plus": "0.3.6"
 allowBuilds:
   "@clerk/shared": true
   "@parcel/watcher": true
