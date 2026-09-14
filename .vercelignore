@@ -8,7 +8,7 @@ output
 node_modules
 .env
 .env.*
-data
+data/*.db
 prisma/generated
 Dockerfile
 docs
