@@ -9,7 +9,6 @@ node_modules
 .env
 .env.*
 data/*.db
-prisma/generated
 Dockerfile
 docs
 .agents

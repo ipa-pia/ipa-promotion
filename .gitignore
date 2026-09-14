@@ -26,7 +26,6 @@ logs
 .env.*
 !.env.example
 
-/prisma/generated/prisma
 data/*.db
 
 # clerk configuration (can include secrets)
