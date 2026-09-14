@@ -110,7 +110,7 @@ export default defineNuxtConfig({
 
   nuxtTmpl: {
     auth: {
-      enabled: true,
+      enabled: false,
       afterSignInRoute: "/dashboard",
     },
     translator: {
