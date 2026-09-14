@@ -1,0 +1,17 @@
+.codegraph
+.data
+.nuxt
+.nitro
+.cache
+dist
+output
+node_modules
+.env
+.env.*
+data
+prisma/generated
+Dockerfile
+docs
+.agents
+.claude
+skills-lock.json

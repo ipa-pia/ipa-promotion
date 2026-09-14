@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cmd_path="$(command -v supabase)"
+project_dir="$(cd "$(dirname "$0")/.." && pwd)"
+
+if [[ "${1:-}" == "db" ]] && [[ "$*" != *--db-url* ]] && [[ "$*" != *--linked* ]] && [[ "$*" != *--local* ]]; then
+  url=$(grep -E '^SUPABASE_DB_URL=' "$project_dir/.env" 2>/dev/null | sed 's/^SUPABASE_DB_URL=//')
+  if [[ -n "$url" ]]; then
+    exec env PGSSLMODE=disable "$cmd_path" "$@" --db-url "$url"
+  fi
+fi
+
+exec "$cmd_path" "$@"
