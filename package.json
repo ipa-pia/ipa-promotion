@@ -14,6 +14,7 @@
     "test": "vitest run",
     "lint": "eslint",
     "lint:fix": "eslint --fix",
+    "typecheck": "vue-tsc --build --force tsconfig.json",
     "prepare": "husky",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
@@ -77,6 +78,7 @@
     "unplugin-auto-import": "^21.0.0",
     "unplugin-icons": "^23.0.1",
     "unplugin-vue-components": "^32.1.0",
-    "vitest": "^4.1.7"
+    "vitest": "^4.1.7",
+    "vue-tsc": "^3.3.11"
   }
 }

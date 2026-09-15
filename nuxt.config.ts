@@ -7,11 +7,15 @@ export default defineNuxtConfig({
   devtools: { enabled: true },
   ssr: false,
 
-  clerk: {
-    afterSignOutUrl: "/",
-    signInForceRedirectUrl: "/dashboard",
-    signInFallbackRedirectUrl: "/dashboard",
-  },
+  ...(process.env.NUXT_PUBLIC_AUTH_PROVIDER === "clerk"
+      ? {
+          clerk: {
+            afterSignOutUrl: "/",
+            signInForceRedirectUrl: "/dashboard",
+            signInFallbackRedirectUrl: "/dashboard",
+          },
+        }
+      : {}),
 
   app: {},
 
@@ -112,6 +116,7 @@ export default defineNuxtConfig({
     auth: {
       enabled: true,
       afterSignInRoute: "/dashboard",
+      guestRoutes: ["/dashboard"],
     },
     translator: {
       enabled: true,
