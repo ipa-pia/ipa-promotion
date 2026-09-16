@@ -279,20 +279,27 @@ watch(
           <el-input v-model="form.inviteCode" placeholder="邀请码（公开）" />
         </el-form-item>
         <el-form-item label="封面">
-          <div class="flex items-center gap-3">
-            <el-image
-              v-if="form.coverUrl"
-              :src="form.coverUrl"
-              fit="cover"
-              style="width: 64px; height: 64px; border-radius: 4px"
+          <div class="flex flex-col gap-2">
+            <div class="flex items-center gap-3">
+              <el-image
+                v-if="form.coverUrl"
+                :src="form.coverUrl"
+                fit="cover"
+                style="width: 64px; height: 64px; border-radius: 4px"
+              />
+              <el-upload
+                :show-file-list="false"
+                accept="image/*"
+                :http-request="uploadCover"
+              >
+                <el-button :loading="uploading">上传封面</el-button>
+              </el-upload>
+            </div>
+            <el-input
+              v-model="form.coverUrl"
+              placeholder="或输入图片 URL / base64 数据 URI"
+              clearable
             />
-            <el-upload
-              :show-file-list="false"
-              accept="image/*"
-              :http-request="uploadCover"
-            >
-              <el-button :loading="uploading">上传封面</el-button>
-            </el-upload>
           </div>
         </el-form-item>
         <el-form-item label="排序">

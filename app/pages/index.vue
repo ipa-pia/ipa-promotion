@@ -49,16 +49,32 @@ async function copyText(text: string, successMessage: string) {
 }
 
 onMounted(loadPromotions)
+
+useHead({
+  title: "精选推荐",
+  link: [
+    { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" },
+  ],
+  meta: [
+    { name: "description", content: "精选好用的 AI 大模型与网络工具推荐，发现值得一试的工具" },
+    { property: "og:title", content: "精选推荐" },
+    { property: "og:description", content: "精选好用的 AI 大模型与网络工具推荐" },
+    { property: "og:type", content: "website" },
+    { name: "twitter:card", content: "summary" },
+    { name: "twitter:title", content: "精选推荐" },
+    { name: "twitter:description", content: "精选好用的 AI 大模型与网络工具推荐" },
+  ],
+})
 </script>
 
 <template>
   <main class="mx-auto max-w-5xl px-4 py-8">
     <p class="mb-8 text-center text-gray-500">
-      精选大模型、网络工具等邀请链接
+      精选好用的 AI 大模型、网络工具等推荐
     </p>
 
     <div v-loading="loading" class="min-h-40">
-      <el-empty v-if="!loading && !errorMessage && promotions.length === 0" description="暂无推广链接" />
+      <el-empty v-if="!loading && !errorMessage && promotions.length === 0" description="暂无推荐内容" />
 
       <el-alert
         v-if="errorMessage"
@@ -76,13 +92,39 @@ onMounted(loadPromotions)
         </h2>
         <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <el-card v-for="promotion in group.items" :key="promotion.id" shadow="hover">
-            <div class="flex h-full flex-col gap-2">
+            <div class="group relative flex h-full flex-col gap-2">
               <el-image
                 v-if="promotion.coverUrl"
                 :src="promotion.coverUrl"
                 fit="cover"
                 class="h-32 w-full rounded"
               />
+              <div
+                class="absolute right-1 top-1 flex gap-1 opacity-0 transition-opacity duration-200 group-hover:opacity-100"
+              >
+                <el-tooltip content="打开" placement="top">
+                  <el-button
+                    circle
+                    size="small"
+                    type="primary"
+                    tag="a"
+                    :href="promotion.url"
+                    target="_blank"
+                    rel="noopener"
+                  >
+                    <Icon name="line-md:external-link" />
+                  </el-button>
+                </el-tooltip>
+                <el-tooltip content="复制链接" placement="top">
+                  <el-button
+                    circle
+                    size="small"
+                    @click="copyText(promotion.url, '已复制链接')"
+                  >
+                    <Icon name="line-md:link" />
+                  </el-button>
+                </el-tooltip>
+              </div>
               <div class="text-base font-medium">{{ promotion.name }}</div>
               <div class="min-h-10 text-sm text-gray-500">{{ promotion.description }}</div>
               <div v-if="promotion.rebate" class="text-xs text-emerald-600">
@@ -92,30 +134,15 @@ onMounted(loadPromotions)
                 v-if="promotion.inviteCode"
                 class="flex items-center gap-1 text-xs text-gray-500"
               >
-                <span>邀请码</span>
+                <span>推荐码</span>
                 <code class="rounded bg-gray-100 px-1 py-0.5">{{ promotion.inviteCode }}</code>
                 <el-button
                   link
                   type="primary"
                   size="small"
-                  @click="copyText(promotion.inviteCode ?? '', '已复制邀请码')"
+                  @click="copyText(promotion.inviteCode ?? '', '已复制推荐码')"
                 >
                   复制
-                </el-button>
-              </div>
-              <div class="mt-auto flex gap-2 pt-2">
-                <el-button
-                  type="primary"
-                  size="small"
-                  tag="a"
-                  :href="promotion.url"
-                  target="_blank"
-                  rel="noopener"
-                >
-                  打开
-                </el-button>
-                <el-button size="small" @click="copyText(promotion.url, '已复制链接')">
-                  复制链接
                 </el-button>
               </div>
             </div>
