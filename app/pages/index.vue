@@ -6,6 +6,7 @@ import {
   PROMOTION_CATEGORY_ORDER,
 } from "#shared/types/promotion"
 import type { Promotion, PromotionRow } from "#shared/types/promotion"
+import { toAbsoluteUrl } from "#shared/utils/url"
 
 const supabase = useSupabaseClient()
 const promotions = ref<Promotion[]>([])
@@ -108,7 +109,7 @@ useHead({
                     size="small"
                     type="primary"
                     tag="a"
-                    :href="promotion.url"
+                    :href="toAbsoluteUrl(promotion.url)"
                     target="_blank"
                     rel="noopener"
                   >
@@ -119,7 +120,7 @@ useHead({
                   <el-button
                     circle
                     size="small"
-                    @click="copyText(promotion.url, '已复制链接')"
+                    @click="copyText(toAbsoluteUrl(promotion.url), '已复制链接')"
                   >
                     <Icon name="line-md:link" />
                   </el-button>
