@@ -51,6 +51,42 @@ pnpm dev
 | `supabase` | Supabase Auth | [Supabase Docs](https://supabase.com/docs) |
 | 留空 | 禁用认证 | - |
 
+## MCP 接入（复用 `@nuxt-tmpl/nuxt` 模板能力）
+
+站点作为 MCP 服务暴露时，OAuth 发现元数据与授权同意页**全部由模板提供，本项目不自建**。
+
+### 模板复用边界
+
+| 能力 | 来源 |
+|---|---|
+| `/.well-known/oauth-protected-resource(/**)` 发现元数据 handler | 模板（`@nuxt-tmpl/nuxt@0.2.10`，本仓库锁定版本；`nuxtTmpl.mcp.enabled: true` 时注册） |
+| RFC 9728 元数据组装（`resource` / `authorization_servers` / `scopes_supported` / `bearer_methods_supported`） | 模板 |
+| issuer 推导（默认 `${SUPABASE_URL origin}/auth/v1`） | 模板 |
+| `/oauth/consent` 同意页（默认 UI `DefaultOAuthConsent`） | 模板（provider 为 supabase 且项目无同名页面时自动注册） |
+| MCP 端点本体（`/api/v1/mcp` 等）与工具面 | **项目自建**（后续任务实现，本项目只放行 `/api/v1` 路径前缀） |
+
+本项目**不**自建：`/.well-known/oauth-protected-resource` 路由、`/oauth/consent` 页面、OAuth 发现元数据组装逻辑、服务端 issuer 推导。如需定制同意页样式，通过 `useAuthForms({ OAuthConsentForm })` 包装模板的 `DefaultOAuthConsent`，不要在 `app/pages/` 下新建 `/oauth/consent` 页面（会顶掉模板实现）。
+
+### 硬前置条件
+
+- **`NUXT_PUBLIC_AUTH_PROVIDER=supabase`**：模板只在 supabase provider 下注册发现 handler 与同意页，其他 provider 会静默失去 MCP 能力（不报错，404）。该变量是**构建期常量**，改动后必须重新构建。
+- `nuxtTmpl.mcp.enabled: true`：模板默认 `false`，必须显式写（`nuxt.config.ts`）。
+- `/.well-known`、`/oauth`、`/api/v1` 已显式加入 `nuxtTmpl.auth.publicRoutes`（模板鉴权默认拒绝；显式声明，不依赖模板内置路由表的版本细节）。
+
+### 发现端点用法（注意带后缀）
+
+客户端应请求**带资源路径后缀**的发现端点，模板按请求路径后缀推导 `resource` 字段：
+
+```bash
+# ✅ 正确：resource = <origin>/api/v1/mcp
+curl http://localhost:3000/.well-known/oauth-protected-resource/api/v1/mcp
+
+# ⚠️ 不带后缀也能访问，但 resource 会是 <origin>/，指向错误
+curl http://localhost:3000/.well-known/oauth-protected-resource
+```
+
+若部署到 Supabase 子路径或使用非 Supabase 授权服务器，在 `nuxt.config.ts` 显式覆盖 `nuxtTmpl.mcp.authorizationServer`，否则严格客户端会按 RFC 8414 §3.3 判定 Issuer mismatch。
+
 ## 数据库配置
 
 本分支默认使用 PostgreSQL（部署适配 Vercel）。在 Vercel 项目中配置：
