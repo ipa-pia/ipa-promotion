@@ -117,6 +117,21 @@ export default defineNuxtConfig({
       enabled: true,
       afterSignInRoute: "/dashboard",
       guestRoutes: ["/dashboard"],
+      // MCP / OAuth 发现相关路径必须显式放行：已发布的 @ipa-schema/auth@1.0.0
+      // DEFAULT_PUBLIC_ROUTES 只有 /__nuxt_error，不包含 /.well-known 与 /oauth。
+      // 模板按「路径段前缀」匹配（/a 覆盖 /a/x/y，/ 只匹配根）。
+      // 缺了这里，MCP 发现请求会被鉴权中间件按未登录 302 到 /（/api/* 则 401）。
+      publicRoutes: ["/api/v1", "/.well-known", "/oauth"],
+    },
+    mcp: {
+      // 模板默认 mcp.enabled: false，必须显式打开，否则发现元数据不会注册（静默 404）。
+      // 模板的 MCP 支持强绑定 supabase provider：NUXT_PUBLIC_AUTH_PROVIDER 必须为 supabase，
+      // 且该变量是构建期常量，改动后需要重新构建。
+      enabled: true,
+      // 模板 0.2.10 默认按 `${NUXT_PUBLIC_SUPABASE_URL} origin + /auth/v1` 推导 issuer。
+      // 若部署到 Supabase 子路径或非 Supabase 授权服务器，需显式覆盖，
+      // 否则严格客户端会在 RFC 8414 §3.3 判定 Issuer mismatch。
+      // authorizationServer: "https://<project>.supabase.co/auth/v1",
     },
     translator: {
       enabled: true,
