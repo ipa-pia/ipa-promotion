@@ -1,0 +1,24 @@
+diff --git a/dist/runtime/pages/oauth/consent.vue b/dist/runtime/pages/oauth/consent.vue
+index bde92da18a5beedfc31e3849c39f9484dd4ac9e9..e6c683a922d4149801e01b86fb19fe94b00ba4c8 100644
+--- a/dist/runtime/pages/oauth/consent.vue
++++ b/dist/runtime/pages/oauth/consent.vue
+@@ -1,8 +1,10 @@
+ <script setup>
++import { onActivated, onMounted, ref, useI18n, useRoute, useRouter } from "#imports";
+ import DefaultOAuthConsent from "../../components/oauth/DefaultOAuthConsent.vue";
+ import { useAuthForms } from "../../composables/useAuthForms";
+ import { useSupabaseClient } from "../../composables/useSupabaseClient";
+ definePageMeta({ auth: "public", tab: false, keepalive: false });
++const { t } = useI18n();
+ const PENDING_KEY = "pending_oauth_authorization_id";
+ const route = useRoute();
+ const router = useRouter();
+@@ -27,7 +29,7 @@ function readAuthorizationId() {
+ async function load() {
+   const authorizationId = readAuthorizationId();
+   if (!authorizationId) {
+-    error.value = $t?.("oauth.consent.missing") ?? "Missing authorization request";
++    error.value = t("oauth.consent.missing");
+     loading.value = false;
+     return;
+   }

@@ -30,3 +30,5 @@ minimumReleaseAgeExclude:
   - "@nuxt-tmpl/*"
   - "@ipa-vue/*"
   - "@ipa-schema/*"
+patchedDependencies:
+  '@nuxt-tmpl/nuxt@0.2.10': patches/@nuxt-tmpl__nuxt@0.2.10.patch
