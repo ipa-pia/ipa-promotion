@@ -92,7 +92,7 @@
 - [ ] 使用目标 Supabase 项目执行 `pnpm build`，确认构建 provider 为 `supabase`。
 - [ ] 获取真实 OAuth 管理员和普通用户 access token；Auth `getUser` 验证 token 后，确认管理员仅由 `app_metadata.role=admin` 判定。**这是本能力的单点风险**：OAuth 签发的 JWT 若不带 `app_metadata.role`，六个写工具对管理员一律 403，RLS 写策略同样拒绝。
 - [ ] 管理员浏览器会话 Cookie 可访问 `GET /api/promotion`，用于与 MCP 读对象进行结构和值对照。
-- [ ] 用只读数据库连接核实目标 `promotion` 表的 `relrowsecurity` 与策略内容符合 `supabase/migrations/20261026000000_promotion_rls.sql`（判据是整串相等，形状不同的等价写法会列为「未识别形状，需人工复核」并附原始值，需人确认后回填 §3.5 快照）。
+- [ ] 用只读数据库连接核实目标 `promotion` 表的 `relrowsecurity` 与策略内容符合 `supabase/migrations/20261026000000_promotion_rls.sql`（`cmd`/`roles`/`permissive` 逐列比对，`using`/`with check` 规范化后整串相等；表达式形状不同会判失败并附原始值、标记「未识别形状，需人工复核」，需人确认后回填 §3.5 快照）。
 - [ ] **执行工件的前置**：核对手工库现有策略是否与工件的三条重复或冲突（含同义但异名的策略）。工件从不删除未登记策略，重放「成功」后 RLS 仍可能是多条策略 OR 叠加的放宽状态；若目标库尚未执行过该工件，需 leoking 批准后再上线。
 - [ ] 在真实目标库完成管理员新增、修改、软下架、普通用户隔离及 RLS 直连拒绝测试，并确认临时记录清理成功。
 - [x] 最终 Preview 的发现元数据、模板 consent 页面、无 token 401 challenge、GET/DELETE 405 已通过 Vercel 授权绕过独立验证；平台 SSO 302 已与应用响应区分。
