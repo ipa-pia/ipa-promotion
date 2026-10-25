@@ -17,8 +17,17 @@ const FORBIDDEN_PREDICATES = Object.freeze(["user_metadata", "raw_user_meta_data
 // roles 决定"谁能命中这条策略"（收窄到 authenticated 会让匿名读整片落空），
 // permissive 决定"多条策略之间是 OR 还是 AND"（restrictive 会把公开读 AND 掉）。
 // 这两列必须显式比对，否则同名同判据的写宽/收窄看不见。
+//
+// 静态绑定：`["public"] + permissive` 是工件省略 `to`/`as` 时唯一自洽的取值，由
+// rls-policy-spec.test.mjs 的「to/as 不变量」用例钉住。真要按角色分授（例如公开读拆成
+// anon + authenticated），必须同时让 renderPolicySql() 显式渲染 `to …`/`as …` 并同步 §3.5
+// 的 SQL 块——只改这两行期望会让工件与断言各走各的，而且只有连上真实库才暴露。
 const EXPECTED_ROLES = Object.freeze(["public"])
 const EXPECTED_PERMISSIVE = true
+
+// `public` 是角色全集：工件已授 public 时，多出来的角色是等价冗余声明；
+// 工件没授 public 时，多出来的角色才是真正的授权面扩大。
+const UNIVERSAL_ROLE = "public"
 
 export const RLS_POLICIES = Object.freeze([
   Object.freeze({
@@ -58,6 +67,7 @@ export const MIGRATION_TIMESTAMP = "20261026000000"
 export const MIGRATION_FILE_NAME = "promotion_rls.sql"
 
 const UNRECOGNISED = "未识别形状，需人工复核"
+const UNRECOGNISED_REDUNDANT = "未识别形状·等价冗余·需人工复核"
 
 function normalizeExpression(value) {
   return String(value ?? "").toLowerCase().replace(/\s+/g, "")
@@ -135,6 +145,24 @@ function compareExpression(policy, field, actual) {
   return null
 }
 
+// 授权面分三种不符：缺少工件要求的角色＝真实收窄；多出角色但工件已授 public＝等价冗余；
+// 多出角色且工件没授 public＝授权面扩大。三者都判失败，但只有后两种的复核方向不同。
+function evaluateRoles(policy, row) {
+  if (row.roles === undefined || row.roles === null) return `${policy.name} 的 roles 缺失，${UNRECOGNISED}`
+  const actual = roleNames(row.roles)
+  const expected = [...policy.roles].sort()
+  const missing = expected.filter(role => !actual.includes(role))
+  const extra = actual.filter(role => !expected.includes(role))
+  if (missing.length) return `${policy.name} 的授权面比工件窄：缺少 ${missing.join(" / ")}，这些角色命中不到该策略；工件要求 ${expected.join(" / ")}`
+  if (extra.length) {
+    if (expected.includes(UNIVERSAL_ROLE)) {
+      return `${policy.name} 的 roles 多出 ${extra.join(" / ")}；工件已授 ${UNIVERSAL_ROLE}（角色全集），多出的是等价冗余声明，${UNRECOGNISED_REDUNDANT}`
+    }
+    return `${policy.name} 的授权面比工件宽：多出 ${extra.join(" / ")}，工件只授 ${expected.join(" / ") || "（无）"}`
+  }
+  return null
+}
+
 function evaluatePolicy(policy, row) {
   if (!row) return { ok: false, detail: `目标库没有 ${policy.name}；期望见 ${migrationFileName()}` }
 
@@ -149,9 +177,8 @@ function evaluatePolicy(policy, row) {
     failures.push(`${policy.name} 的 permissive 不是布尔值，${UNRECOGNISED}`)
   }
 
-  const actualRoles = roleNames(row.roles)
-  if (row.roles === undefined || row.roles === null) failures.push(`${policy.name} 的 roles 缺失，${UNRECOGNISED}`)
-  else if (actualRoles.join(",") !== [...policy.roles].sort().join(",")) failures.push(`${policy.name} 授权给 ${actualRoles.join(" / ") || "（空）"}，工件要求 ${policy.roles.join(" / ")}`)
+  const rolesMismatch = evaluateRoles(policy, row)
+  if (rolesMismatch) failures.push(rolesMismatch)
 
   const forbidden = forbiddenPredicates(`${row.qual} ${row.with_check}`)
   if (forbidden.length) failures.push(`${policy.name} 引用了客户端可改的 ${forbidden.join(" / ")}，不得出现在策略里`)
@@ -167,6 +194,22 @@ function evaluatePolicy(policy, row) {
 
   if (!failures.length) return { ok: true, detail: "" }
   return { ok: false, detail: `${failures.join("；")}；${rawState(row)}` }
+}
+
+// 未登记策略的叠加方向取决于 permissive：permissive 之间 OR（放宽），restrictive 与它们 AND（收窄）。
+// 所以只报"是放宽"会把复核方向带偏，必须附原文让复核者自己定性。
+function describeUnregistered(rows) {
+  const lines = rows.map(row => `${row.policyname}（cmd=${showValue(row.cmd)} / permissive=${showValue(row.permissive)} / roles=${showValue(row.roles)} / qual=${showValue(row.qual)}）`)
+  const permissive = rows.filter(row => row.permissive === true).length
+  const restrictive = rows.filter(row => row.permissive === false).length
+  const direction = permissive && restrictive
+    ? `其中 permissive 的与工件三条 OR 叠加（放宽），restrictive 的再与之 AND 叠加（收窄）——两个方向同时存在`
+    : permissive
+        ? "都是 permissive：与工件三条 OR 叠加，方向是放宽；工件不删除未登记策略，重放成功也收不回来"
+        : restrictive
+            ? "都是 restrictive：与工件三条 AND 叠加，方向是收窄（可能让公开读或管理写拿不到行）；仍与工件不一致"
+            : `permissive 取值未识别（${UNRECOGNISED}）`
+  return `未登记：${lines.join(" / ")}；${direction}`
 }
 
 /**
@@ -189,11 +232,13 @@ export function evaluateRlsState({ rlsEnabled, policies }) {
     ...RLS_POLICIES.map(policy => ({ ...evaluatePolicy(policy, rows.get(policy.name)), label: policy.label })),
   ]
   const expected = new Set(RLS_POLICIES.map(policy => policy.name))
-  const unexpected = [...rows.keys()].filter(name => !expected.has(name)).sort()
+  const unregistered = (policies ?? [])
+    .filter(row => !expected.has(row.policyname))
+    .sort((left, right) => String(left.policyname).localeCompare(String(right.policyname)))
   checks.push({
     label: "目标库策略集合与仓库工件一致（无未登记的额外策略）",
-    ok: unexpected.length === 0,
-    detail: unexpected.length ? `未登记：${unexpected.join(" / ")}；工件不会删除这些策略，重放后 RLS 仍是 OR 放宽态` : "",
+    ok: unregistered.length === 0,
+    detail: unregistered.length ? describeUnregistered(unregistered) : "",
   })
   return checks
 }
