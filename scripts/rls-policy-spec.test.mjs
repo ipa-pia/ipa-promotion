@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest"
 import {
   RLS_POLICIES,
   RLS_TARGET,
+  evaluateRoles,
   evaluateRlsState,
   migrationFileName,
   renderMigrationSql,
@@ -17,6 +18,11 @@ const verifierPath = fileURLToPath(new URL("./verify-mcp.mjs", import.meta.url))
 
 const policyNames = RLS_POLICIES.map(policy => policy.name).sort()
 const ADMIN_EXPRESSION = "((auth.jwt() -> 'app_metadata' ->> 'role'::text) = 'admin'::text)"
+
+// Postgres 的子句缺省：`create policy` 不写 `to` 即授 PUBLIC（角色全集），不写 `as` 即 PERMISSIVE。
+// 这是数据库语义，不是真源的期望值——真源的期望与它是否自洽由 expectPolicyClauses 比对。
+const DEFAULT_ROLE = "public"
+const DEFAULT_PERMISSIVE = true
 
 function sqlBlocks(markdown) {
   return [...markdown.matchAll(/```sql\n([\s\S]*?)```/g)].map(match => match[1])
@@ -72,16 +78,63 @@ function createPolicyNames(sql) {
   return [...sql.matchAll(/create policy "([^"]+)"/g)].map(match => match[1]).sort()
 }
 
+// 语句里的授权子句。Postgres 的语法顺序是 `… ON table [AS permissive|restrictive] [FOR cmd] [TO roles] [USING …]`，
+// 所以 `to` 只在 `for <cmd>` 之后、`as` 只在 `using (` 之前找；行首锚定会被 `for select to authenticated`
+// 这种同行书写骗成"省略了子句"（复验的 V7 漏）。
+function parseClauses(statement) {
+  const using = statement.toLowerCase().indexOf("using (")
+  const head = statement.slice(0, using < 0 ? statement.length : using)
+  const asMatch = /\bas\s+(permissive|restrictive)\b/i.exec(head)
+  const forMatch = /\bfor\s+(?:select|insert|update|delete|all)\b/i.exec(head)
+  const afterCommand = forMatch ? head.slice(forMatch.index + forMatch[0].length) : ""
+  const toMatch = /\bto\s+(.+?)(?:\s+as\s+(?:permissive|restrictive))?\s*$/is.exec(afterCommand.trim())
+  return {
+    roles: toMatch ? toMatch[1].split(",").map(name => name.trim().toLowerCase()).filter(Boolean).sort() : null,
+    permissive: asMatch ? asMatch[1].toLowerCase() === "permissive" : null,
+  }
+}
+
+// 生效语义：解析到的子句，缺省按 Postgres 的省略默认补齐。
+function effectiveClauses(statement) {
+  const clauses = parseClauses(statement)
+  return { roles: clauses.roles ?? [DEFAULT_ROLE], permissive: clauses.permissive ?? DEFAULT_PERMISSIVE }
+}
+
+// 子句检查对工件与 §3.5 的块用同一份：分授写法今天只在工件里，块里单独改子句以前没人比（V8 漏）。
+function expectPolicyClauses(sql) {
+  for (const policy of RLS_POLICIES) {
+    const statement = createPolicyStatement(sql, policy.name)
+    expect(statement, `缺少 create policy ${policy.name}`).not.toBeNull()
+    const clauses = effectiveClauses(statement)
+    expect(clauses.roles, `${policy.name} 的生效角色集与真源期望不一致：块里是 ${clauses.roles.join(" / ")}，真源要求 ${[...policy.roles].sort().join(" / ")}`).toEqual([...policy.roles].sort())
+    expect(clauses.permissive, `${policy.name} 的生效叠加方式是 ${clauses.permissive ? "permissive" : "restrictive"}，真源要求 ${policy.permissive ? "permissive" : "restrictive"}`).toBe(policy.permissive)
+  }
+}
+
+// 去掉 `--` 注释行、按分号切句、空白规范化并小写，用来比较"块里到底执行了哪些语句"。
+function sqlStatements(sql) {
+  return sql
+    .split("\n")
+    .filter(line => !line.trim().startsWith("--"))
+    .join("\n")
+    .split(";")
+    .map(statement => statement.replace(/\s+/g, " ").trim().toLowerCase())
+    .filter(Boolean)
+    .sort()
+}
+
 // 同一条比对同时用于生成的 migration 工件与 docs/mcp-design.md §3.5 的 SQL 块。
-// 双向：既要求三条都在且判据逐字相同，也要求块里没有第四条未登记的策略、事务包装与 enable 语句没被删掉。
+// 块里到底执行了哪些语句必须与真源渲染出的集合**相等**：操作员会照 §3.5 手工执行，
+// 风险面是"块里多出的任何一条语句"，`drop table`/`owner to`/`truncate`/`create role`/`set role`
+// 这类关键词黑名单永远追不上（复验 P3 的判定）。
 function expectRlsSqlBlock(sql) {
+  const expected = sqlStatements(renderMigrationSql())
+  const actual = sqlStatements(sql)
+  const extra = actual.filter(statement => !expected.includes(statement))
+  const missing = expected.filter(statement => !actual.includes(statement))
+  expect(extra, `块里夹带了工件之外的语句：${extra.join("；")}${missing.length ? `；还缺少：${missing.join("；")}` : ""}`).toEqual([])
+  expect(missing, `块里缺少工件要求的语句：${missing.join("；")}${extra.length ? `；还夹带了：${extra.join("；")}` : ""}`).toEqual([])
   expect(createPolicyNames(sql), "create policy 的名字集合必须与真源一致").toEqual(policyNames)
-  expect(sql, "缺少 enable row level security").toContain(`alter table ${RLS_TARGET.qualified} enable row level security;`)
-  expect(sql, "缺少事务包装 begin;").toMatch(/^begin;$/m)
-  expect(sql, "缺少事务包装 commit;").toMatch(/^commit;$/m)
-  // enable 三条之外不许夹带别的 DDL：force row level security 会让表 owner 也受 RLS 约束，
-  // 在 Supabase 上正好打断 service_role 的写入；grant/revoke 改变授权面。两者都不在工件里。
-  expect(sql, "块里夹带了工件之外的 DDL").not.toMatch(/\b(force\s+row\s+level\s+security|grant|revoke)\b/i)
   for (const policy of RLS_POLICIES) {
     const statement = createPolicyStatement(sql, policy.name)
     expect(statement, `缺少 create policy ${policy.name}`).not.toBeNull()
@@ -90,7 +143,36 @@ function expectRlsSqlBlock(sql) {
     if (policy.withCheck) expect(statement).toContain(`with check (${policy.withCheck})`)
     else expect(statement).not.toContain("with check")
   }
+  expectPolicyClauses(sql)
 }
+
+// 把子句插进每条 `create policy` 的 `using (` 之前（与工件一样的多行排布）。
+function withClause(sql, clause) {
+  return RLS_POLICIES.reduce((text, policy) => {
+    const statement = createPolicyStatement(text, policy.name)
+    return text.split(statement).join(statement.replace(/\n\s*using \(/, `\n  ${clause}\n  using (`))
+  }, sql)
+}
+
+// 同行书写：`… for select to authenticated using (…)`。以前用行首锚定探测省略，这种写法会整条躲过检查。
+function inlineClause(sql, clause) {
+  return RLS_POLICIES.reduce((text, policy) => {
+    const statement = createPolicyStatement(text, policy.name)
+    const inlined = statement
+      .replace(/;$/, "")
+      .replace(/\s+/g, " ")
+      .replace(/\bfor\s+(select|insert|update|delete|all)\b/i, (_match, command) => ` for ${command} ${clause}`)
+    return text.split(statement).join(`${inlined};`)
+  }, sql)
+}
+
+// 期望没动、工件或 §3.5 的授权子句先变了——复验实测的三个漏（V6/V7/V8）加一个只写 as 的变体。
+const CLAUSE_MUTATIONS = [
+  { id: "V6", description: "工件写 `to public, promotion_superuser`（期望只有 public）", clause: "to public, promotion_superuser", target: "artifact", inline: false, expectThrow: /生效角色集/ },
+  { id: "V7", description: "`to authenticated` 与 `for select` 同行书写", clause: "to authenticated", target: "artifact", inline: true, expectThrow: /生效角色集/ },
+  { id: "V8", description: "只有 §3.5 写 `to authenticated`（工件与真源都不动）", clause: "to authenticated", target: "design", inline: true, expectThrow: /生效角色集/ },
+  { id: "V5", description: "只写 `as restrictive`（不带 to）", clause: "as restrictive", target: "artifact", inline: false, expectThrow: /生效叠加方式/ },
+]
 
 // 测试与审查实测过的"写宽/收窄"变异：整式相等 + roles/permissive 之后必须全部转为判失败。
 const MUTATIONS = [
@@ -204,38 +286,54 @@ describe("promotion RLS 工件与真源一致", () => {
     expect(() => expectRlsSqlBlock(withoutTransaction)).toThrow(/begin/)
   })
 
-  it("§3.5 夹带 force row level security 时断言失败", () => {
-    const forced = designRlsBlocks()[0].replace(
-      `alter table ${RLS_TARGET.qualified} enable row level security;`,
-      `alter table ${RLS_TARGET.qualified} enable row level security;\nalter table ${RLS_TARGET.qualified} force row level security;`,
-    )
-    expect(() => expectRlsSqlBlock(forced)).toThrow(/DDL/)
+  // 语句集合相等一次封掉所有未登记的 DDL：操作员照 §3.5 手工执行，风险面是"块里多出的任何一条语句"，
+  // 关键词黑名单永远追不上新写法（复验 P3 的判定）。
+  const UNREGISTERED_DDL = [
+    `alter table ${RLS_TARGET.qualified} force row level security;`,
+    `grant select on ${RLS_TARGET.qualified} to anon;`,
+    `revoke all on ${RLS_TARGET.qualified} from public;`,
+    `drop table ${RLS_TARGET.qualified};`,
+    `truncate ${RLS_TARGET.qualified};`,
+    `alter table ${RLS_TARGET.qualified} owner to postgres;`,
+    `create role promotion_writer;`,
+    `set role promotion_writer;`,
+  ]
+
+  for (const ddl of UNREGISTERED_DDL) {
+    it(`§3.5 夹带「${ddl}」时断言失败`, () => {
+      expect(() => expectRlsSqlBlock(`${designRlsBlocks()[0]}\n${ddl}`), ddl).toThrow(/夹带了工件之外的语句/)
+    })
+  }
+
+  // 省略写法（工件现在就是这个形状）必须解析成"没有子句"，生效语义由 Postgres 默认补齐，
+  // 并与真源期望逐条一致——期望漂离默认值时这里红，不需要等连上真实库。
+  it("省略 to/as 的工件：生效语义按 Postgres 默认补齐为 public + permissive", () => {
+    for (const policy of RLS_POLICIES) {
+      const statement = createPolicyStatement(renderMigrationSql(), policy.name)
+      expect(parseClauses(statement).roles, `${policy.name} 不该解析出 to 子句`).toBeNull()
+      expect(parseClauses(statement).permissive, `${policy.name} 不该解析出 as 子句`).toBeNull()
+      expect(effectiveClauses(statement), policy.name).toEqual({ roles: ["public"], permissive: true })
+      expect([...policy.roles].sort(), `${policy.name} 的期望角色集必须与省略默认一致`).toEqual(["public"])
+      expect(policy.permissive, `${policy.name} 的期望叠加方式必须与省略默认一致`).toBe(true)
+    }
   })
 
-  it("§3.5 夹带 grant/revoke 时断言失败", () => {
-    for (const ddl of [`grant select on ${RLS_TARGET.qualified} to anon;`, `revoke all on ${RLS_TARGET.qualified} from public;`]) {
-      expect(() => expectRlsSqlBlock(`${designRlsBlocks()[0]}\n${ddl}`), ddl).toThrow(/DDL/)
-    }
+  // 不变量是双向的：渲染器写出与默认同义的显式子句时仍为绿（V4），写出不同的子句时红（V6/V7/V8）。
+  it("V4：渲染器显式写出同义的 to public as permissive 时子句门禁仍为绿", () => {
+    const explicit = withClause(renderMigrationSql(), "to public as permissive")
+    expect(parseClauses(createPolicyStatement(explicit, "promotion_select_active"))).toEqual({ roles: ["public"], permissive: true })
+    expect(() => expectPolicyClauses(explicit)).not.toThrow()
   })
 
-  // 真源的 roles/permissive 期望与工件的省略写法必须同进同退：只改期望会让断言与工件各说各话，
-  // 而这个矛盾只有连上真实库核验才暴露（复验实测：改期望 + 同步夹具后 30 项仍全绿）。
-  it("to/as 不变量：工件省略 to/as 时，期望必须恰好是 public + permissive", () => {
-    const statements = RLS_POLICIES.map(policy => createPolicyStatement(renderMigrationSql(), policy.name))
-    const omitsClause = statements.every(statement => !/^\s*(to|as)\s+[a-z]/im.test(statement))
-    if (omitsClause) {
-      for (const policy of RLS_POLICIES) {
-        expect(policy.roles, `${policy.name} 的 roles 期望`).toEqual(["public"])
-        expect(policy.permissive, `${policy.name} 的 permissive 期望`).toBe(true)
-      }
-    }
-    else {
-      for (const [index, policy] of RLS_POLICIES.entries()) {
-        expect(statements[index], policy.name).toContain(`to ${policy.roles.join(", ")}`)
-        expect(statements[index], policy.name).toContain(`as ${policy.permissive ? "permissive" : "restrictive"}`)
-      }
-    }
-  })
+  for (const mutation of CLAUSE_MUTATIONS) {
+    it(`${mutation.id}：${mutation.description} 必须红`, () => {
+      const source = mutation.target === "design" ? designRlsBlocks()[0] : renderMigrationSql()
+      const mutated = mutation.inline ? inlineClause(source, mutation.clause) : withClause(source, mutation.clause)
+      expect(() => expectPolicyClauses(mutated), mutation.clause).toThrow(mutation.expectThrow)
+      // 只改 §3.5 时工件自己仍是绿的：证明报的是块与真源的分歧，不是块本身缺项。
+      if (mutation.target === "design") expect(() => expectPolicyClauses(renderMigrationSql())).not.toThrow()
+    })
+  }
 
   it("工件里没有 client 可改的 user_metadata / raw_user_meta_data 判据", () => {
     const sql = renderMigrationSql().toLowerCase()
@@ -410,5 +508,46 @@ describe("verify-mcp 的 RLS 断言只认真源", () => {
     const verifier = readFileSync(verifierPath, "utf8")
     expect(verifier).toContain("evaluateRlsState")
     for (const policy of RLS_POLICIES) expect(verifier, policy.name).not.toContain(`"${policy.name}"`)
+  })
+})
+
+// `public` 是角色全集：`to public` 覆盖当前与未来的所有角色，所以它相对任何期望都是超集，
+// 不是"缺角色"。分授落地后（期望不含 public）这个方向才可读，判定必须先写对。
+describe("roles 的方向判定", () => {
+  const policy = roles => ({ name: "promotion_select_active", roles, permissive: true })
+  const detail = (expected, actual) => evaluateRoles(policy(expected), { roles: actual }).join("；")
+
+  it("actual 含 public 时不再声称有角色命中不到，报的是扩大", () => {
+    const messages = detail(["authenticated"], ["public"])
+    expect(messages).toContain("授权面比工件宽")
+    expect(messages).not.toContain("比工件窄")
+    expect(messages).not.toContain("命中不到")
+  })
+
+  it("期望含 public 时，多出的任何角色都是等价冗余而不是免判失败", () => {
+    for (const extra of [["public", "authenticated"], ["public", "anon"], ["public", "service_role"], ["public", "promotion_superuser"]]) {
+      const messages = detail(["public"], extra)
+      expect(messages, extra.join("/")).toContain("等价冗余")
+      expect(messages, extra.join("/")).toContain("未识别形状·等价冗余·需人工复核")
+      expect(messages, extra.join("/")).not.toContain("比工件宽")
+    }
+  })
+
+  it("期望不含 public 时，多出的非 public 角色才是真实扩大", () => {
+    for (const extra of [["authenticated", "service_role"], ["authenticated", "promotion_superuser"]]) {
+      expect(detail(["authenticated"], extra), extra.join("/")).toContain("授权面比工件宽")
+    }
+  })
+
+  it("缺少与多出同时成立时两段都拼进结果", () => {
+    const messages = detail(["authenticated", "service_role"], ["anon"])
+    expect(messages).toContain("比工件窄")
+    expect(messages).toContain("比工件宽")
+  })
+
+  it("actual 缺 public 才是真实收窄", () => {
+    const messages = detail(["public"], ["authenticated"])
+    expect(messages).toContain("比工件窄")
+    expect(messages).toContain("缺少 public")
   })
 })

@@ -19,9 +19,11 @@ const FORBIDDEN_PREDICATES = Object.freeze(["user_metadata", "raw_user_meta_data
 // 这两列必须显式比对，否则同名同判据的写宽/收窄看不见。
 //
 // 静态绑定：`["public"] + permissive` 是工件省略 `to`/`as` 时唯一自洽的取值，由
-// rls-policy-spec.test.mjs 的「to/as 不变量」用例钉住。真要按角色分授（例如公开读拆成
+// rls-policy-spec.test.mjs 的「to/as 生效语义」用例钉住。真要按角色分授（例如公开读拆成
 // anon + authenticated），必须同时让 renderPolicySql() 显式渲染 `to …`/`as …` 并同步 §3.5
-// 的 SQL 块——只改这两行期望会让工件与断言各走各的，而且只有连上真实库才暴露。
+// 的 SQL 块。实测的两个方向不对称：只改这两行期望（工件不动）本地就红——期望与工件的省略
+// 默认值直接比对；过去只有连上真实库才暴露的是**只改工件的 `to`/`as`**（子句写成
+// `for select to authenticated` 同行时，行首锚定的探测会当成"省略"而整条用例空转）。
 const EXPECTED_ROLES = Object.freeze(["public"])
 const EXPECTED_PERMISSIVE = true
 
@@ -145,22 +147,36 @@ function compareExpression(policy, field, actual) {
   return null
 }
 
-// 授权面分三种不符：缺少工件要求的角色＝真实收窄；多出角色但工件已授 public＝等价冗余；
-// 多出角色且工件没授 public＝授权面扩大。三者都判失败，但只有后两种的复核方向不同。
-function evaluateRoles(policy, row) {
-  if (row.roles === undefined || row.roles === null) return `${policy.name} 的 roles 缺失，${UNRECOGNISED}`
+// 授权面的三种不符。`missing` 与 `extra` 可能同时成立，两段都拼进结果——return-on-first 会把另一侧的事实吞掉。
+// `public` 是角色全集（覆盖当前与未来的所有角色），所以：
+//   - actual 含 public 时不报"窄"：没有哪个角色命中不到该策略；
+//   - 期望含 public 时多出的角色是等价冗余（转人工复核），期望不含 public 时多出的角色才是授权面扩大。
+// `["public","public"]` / `["public",""]` 这类 `roleNames` 会静默吸收的形状 Postgres 造不出（`pg_policies`
+// 是数组类型，不会给出重复或空角色），记录为可接受，不为它加断言。
+export function evaluateRoles(policy, row) {
+  if (row.roles === undefined || row.roles === null) return [`${policy.name} 的 roles 缺失，${UNRECOGNISED}`]
   const actual = roleNames(row.roles)
   const expected = [...policy.roles].sort()
+  const actualHasUniversal = actual.includes(UNIVERSAL_ROLE)
+  const expectedHasUniversal = expected.includes(UNIVERSAL_ROLE)
   const missing = expected.filter(role => !actual.includes(role))
   const extra = actual.filter(role => !expected.includes(role))
-  if (missing.length) return `${policy.name} 的授权面比工件窄：缺少 ${missing.join(" / ")}，这些角色命中不到该策略；工件要求 ${expected.join(" / ")}`
-  if (extra.length) {
-    if (expected.includes(UNIVERSAL_ROLE)) {
-      return `${policy.name} 的 roles 多出 ${extra.join(" / ")}；工件已授 ${UNIVERSAL_ROLE}（角色全集），多出的是等价冗余声明，${UNRECOGNISED_REDUNDANT}`
-    }
-    return `${policy.name} 的授权面比工件宽：多出 ${extra.join(" / ")}，工件只授 ${expected.join(" / ") || "（无）"}`
+  const messages = []
+  if (missing.length && !actualHasUniversal) {
+    messages.push(`${policy.name} 的授权面比工件窄：缺少 ${missing.join(" / ")}，这些角色命中不到该策略；工件要求 ${expected.join(" / ")}`)
   }
-  return null
+  if (extra.length) {
+    if (expectedHasUniversal) {
+      messages.push(`${policy.name} 的 roles 多出 ${extra.join(" / ")}；工件已授 ${UNIVERSAL_ROLE}（角色全集），多出的是等价冗余声明，${UNRECOGNISED_REDUNDANT}`)
+    }
+    else if (actualHasUniversal) {
+      messages.push(`${policy.name} 的授权面比工件宽：roles 含 ${UNIVERSAL_ROLE}（角色全集），工件只授 ${expected.join(" / ") || "（无）"}`)
+    }
+    else {
+      messages.push(`${policy.name} 的授权面比工件宽：多出 ${extra.join(" / ")}，工件只授 ${expected.join(" / ") || "（无）"}`)
+    }
+  }
+  return messages
 }
 
 function evaluatePolicy(policy, row) {
@@ -177,8 +193,7 @@ function evaluatePolicy(policy, row) {
     failures.push(`${policy.name} 的 permissive 不是布尔值，${UNRECOGNISED}`)
   }
 
-  const rolesMismatch = evaluateRoles(policy, row)
-  if (rolesMismatch) failures.push(rolesMismatch)
+  failures.push(...evaluateRoles(policy, row))
 
   const forbidden = forbiddenPredicates(`${row.qual} ${row.with_check}`)
   if (forbidden.length) failures.push(`${policy.name} 引用了客户端可改的 ${forbidden.join(" / ")}，不得出现在策略里`)
