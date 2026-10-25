@@ -1,0 +1,18 @@
+.env.example
+  h_6539c3a3cd32c4 31-40
+README.md
+  h_6539c3a3cd32c4 54-88
+nuxt.config.ts
+  h_6539c3a3cd32c4 120-134
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ca16e51525f1ed8c4c467fda5ddadf23c8a26ec9",
+  "prompts": {},
+  "humans": {
+    "h_6539c3a3cd32c4": {
+      "author": "xdewx <present150608@sina.com>"
+    }
+  }
+}

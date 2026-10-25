@@ -1,0 +1,14 @@
+docs/mcp-design.md
+  h_6539c3a3cd32c4 3,23-31,76,178,254-295,380,395-396,517,552-553,563-564,567,575,578,583,591,604-612,642,645,647-648
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e307158063bd53c8ce31ad38f63c5279486b33ef",
+  "prompts": {},
+  "humans": {
+    "h_6539c3a3cd32c4": {
+      "author": "xdewx <present150608@sina.com>"
+    }
+  }
+}
