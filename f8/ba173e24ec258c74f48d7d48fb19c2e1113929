@@ -1,0 +1,21 @@
+nuxt.config.ts
+  s_c9c4e7ce18bc34::t_1f8948c5c1f41e 120,122
+docs/mcp-design.md
+  s_c9c4e7ce18bc34::t_724ac23e80dacf 20,51-52,532,600
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f8ba173e24ec258c74f48d7d48fb19c2e1113929",
+  "prompts": {},
+  "sessions": {
+    "s_c9c4e7ce18bc34": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a17239-4eab-7443-ab6e-f516da06b289",
+        "model": "gpt-6-luna"
+      },
+      "human_author": "xdewx <present150608@sina.com>"
+    }
+  }
+}
