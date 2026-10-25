@@ -4,7 +4,7 @@
 
 本记录对应 LEOK-19 的验收脚本、README 文档和对 `feat/mcp` 的独立检查。
 
-**当前复核基线：`feat/mcp` = `cd924a402d7ddbeee641e413df3eab9154434b13`**（PR #16 合入后的 HEAD；上一个基线 `135fceac…` 是 PR #15 合入后的 HEAD；更早的 `e0382070…` 是 PR #12 / #13 / #14 按序合入后的 HEAD，`cfed99c9…` 是 PR #11 升级 `@nuxt-tmpl/nuxt` 到 0.2.11 后的 HEAD）。`cd924a40` 的文件树与取证时的工作树逐 blob 一致（README、`package.json`、`docs/mcp-design.md`、`docs/mcp-acceptance.md`、`scripts/rls-policy-spec.mjs`、`scripts/rls-policy-spec.test.mjs`、`scripts/verify-mcp.mjs`、`scripts/typecheck-with-provider.mjs`、`supabase/migrations/20261026000000_promotion_rls.sql` 共 9 个），所以下面「离线证据」的仓库内检查对 `cd924a40` 成立；Vercel Preview 的观测对象是 `cfed99c9` 的部署，与更早的部署一起不再作为当前状态证据（观测方法保留在文末）。PR #7（`feat/mcp` → `main`）的合并与发布由 leoking 决定。
+**当前复核基线：`feat/mcp` = `8a69e94bc9f73ddd7c9881ad838b3d8d6c27b958`**（PR #17 合入后的 merge commit，父提交 `cd924a40` + `de55fdb9`）。历史基线**只作沿革用，别再当成当前状态证据**：`cd924a40…` 是 PR #16 合入后的 HEAD，`135fceac…` 是 PR #15，`e0382070…` 是 PR #12 / #13 / #14 按序合入后的 HEAD，`cfed99c9…` 是 PR #11 升级 `@nuxt-tmpl/nuxt` 到 0.2.11 后的 HEAD。`8a69e94b` 的文件树与取证时的工作树逐 blob 一致——`README.md` `c862587b`、`package.json` `47306186`、`docs/mcp-design.md` `750c645f`、`docs/mcp-acceptance.md`（本文件，随基线号一起前移）、`scripts/rls-policy-spec.mjs` `d71b8367`、`scripts/rls-policy-spec.test.mjs` `488fd29a`、`scripts/typecheck-with-provider.mjs` `5d52e60c`、`scripts/verify-mcp.mjs` `55c7e356`、`supabase/migrations/20261026000000_promotion_rls.sql` `86fd3f03` 共 9 个，其中**真源与工件自 #12 落地起逐字节未变**，即 #15 / #16 / #17 三个 PR 的门禁加固都没有动过渲染语义。所以下面「离线证据」的仓库内检查对 `8a69e94b` 成立；Vercel Preview 的观测对象是 `cfed99c9` 的部署，与更早的部署一起不再作为当前状态证据（观测方法保留在文末）。PR #7（`feat/mcp` → `main`）的 head 已随之同步到 `8a69e94b`（31 文件 `+9487/−4421`）；它的合并与发布由 leoking 决定。**本行基线号的读法**：把本记录前移到这个 merge commit 之后落地的提交只可能是 doc-only（改这两份文档的基线与措辞），它不会改动上面任何一个脚本或工件 blob。要把「当前 HEAD」当成证据，读 `git rev-parse feat/mcp`（或 PR #7 的 head sha），别只读本行——本行的作用是给出**逐 blob 取证的那棵树**，不是一个可以替代它的快照。
 
 **当前结论：模板路由、MCP HTTP 边界与全部凭据无关项已独立复验通过；真实 OAuth/RLS 端到端验收尚未通过。** 本地环境没有 `.env` 或 MCP 测试变量；Vercel Preview 已配置 Supabase provider、URL 和 anon key，但还没有真实 OAuth 管理员/普通用户 token、管理员浏览器会话 Cookie 或数据库只读连接。不能据此声称 `pnpm test:mcp` 或生产上线门禁通过。PR #7 的合并与发布由 leoking 决定，不由开发侧推进。
 
@@ -35,14 +35,14 @@
 | `GET /oauth/unknown` | 302 → `/`（未误放行相似路径） |
 | `GET /.well-known/oauth-protected-resource` 无后缀 | 200，`resource` 退化为 `<origin>/` —— 与 README 的「必须带后缀」警告一致 |
 
-## RLS 工件（#12 已合入 `feat/mcp`；复验补强见 #15 / #16 与本 PR）
+## RLS 工件（#12 已合入 `feat/mcp`；门禁补强按 #15 / #16 / #17 分批合入，该线到此收口）
 
 `promotion` 表的三条策略与只读核验查询现在有了仓库内真源：`scripts/rls-policy-spec.mjs`。
 
 | 载体 | 内容 |
 |---|---|
 | `scripts/rls-policy-spec.mjs` | 策略名、`cmd`、`using` / `with check` 判据、`roles`（工件不带 `to` → 期望恰为 `public`）与 `permissive`（工件不带 `as` → 期望 permissive）、禁用谓词（`user_metadata` / `raw_user_meta_data`）、幂等 migration SQL 渲染、只读核验查询（`pg_class` + `pg_policies`）、`evaluateRlsState()` 与 `evaluateRoles()` 比对 |
-| `supabase/migrations/20261026000000_promotion_rls.sql` | 上述真源渲染出的 migration 工件，幂等（`drop policy if exists` + `create policy`），整体包在 `begin;`/`commit;` 里；由 `pnpm test` 做逐字节漂移校验（本 PR 未改渲染语义，blob 仍是 `86fd3f03`） |
+| `supabase/migrations/20261026000000_promotion_rls.sql` | 上述真源渲染出的 migration 工件，幂等（`drop policy if exists` + `create policy`），整体包在 `begin;`/`commit;` 里；由 `pnpm test` 做逐字节漂移校验（#15 / #16 / #17 三个 PR 的门禁加固都没改渲染语义，blob 仍是 `86fd3f03`） |
 | `scripts/verify-mcp.mjs` | `verifyRlsPolicies()` 不再自带策略名与正则，改为调用 `evaluateRlsState()`，一次列全所有与工件不符的项；`pg_class` 查不到表时按「查询无结果」报，不与「RLS 未开启」混为一谈 |
 | `scripts/rls-policy-spec.test.mjs` | 67 项，三层门禁：**① 冻结的语句形状上限**（字面量写在测试里、不从渲染器取，逐条整句匹配，工件与 §3.5 两块同受约束；子句段要求至少写出一条）、**② §3.5 块 ↔ 真源渲染结果的语句集合相等**（多一条少一条都红）、**③ 逐条判据与 `to`/`as` 子句**（子句在语句内部解析，解析出来就与期望做集合相等，确实省略才补 Postgres 默认；head 里有 `to` 却没解析出角色集时判「未识别形状，需人工复核」而不补默认值）。夹具：A7/A8b 类故障、9 个库侧写宽/收窄变异（`判据 OR (true)`、`is_active = true OR is_active = false`、`<> 'notadmin'`、`IN ('admin', 'service')`、`with check … OR (true)`、`to authenticated`、`to public, authenticated`、`as restrictive`、`raw_user_meta_data` 判据；`using (true)` 恒真、缺 `with check`、只读策略带 `with check`、`cmd` 收窄另立用例）、4 个工件/块侧授权子句变异（V5 `as restrictive`、V6 `to public, promotion_superuser`、V7 同行 `to authenticated`、V8 只改 §3.5 的块）、8 条未登记 DDL（force RLS、grant、revoke、drop table、truncate、owner to、create role、set role）、5 项 `roles` 方向判定、2 项「有 `to` 未识别」（R1：缺 `FOR` 的角色集、策略名内含字面量 `using (` 的窗口截断）、4 项渲染器被改动后的上限用例（T11 `delete from`、T15 `disable row level security`、T16 换拼法的 `revoke usage`、T9 `drop table if exists`——这四条在只看集合相等时两边同改仍全绿）、1 项正宗子句顺序（T17：把工件与 §3.5 一起改写成 `as permissive for select to public`，块识别、形状上限、结构断言必须仍为绿，R4）、3 项 `FOR` 缺省与角色名容错（两条读策略缺 `FOR` 时**上限放行、结构断言必须报 `for 子句是 all，真源要求 select`**；写策略缺 `FOR` 与 `FOR ALL` 同义、结构断言为绿；三条子句全省略时上限与结构断言各自都拦得住；`to "promotion-writer"` / `to "promotion.writer"` 不撞上限） |
 
