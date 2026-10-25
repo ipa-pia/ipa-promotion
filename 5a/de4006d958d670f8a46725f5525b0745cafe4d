@@ -1,0 +1,37 @@
+docs/mcp-acceptance.md
+  s_00d3c3a52cc65e::t_eaf4a59b9654e9 29,36,54,66
+  s_00d3c3a52cc65e::t_500aca965965b0 34
+docs/mcp-design.md
+  s_00d3c3a52cc65e::t_4ec81c8274e513 492-493
+server/utils/mcp.test.ts
+  s_00d3c3a52cc65e::t_4ec81c8274e513 5,39,48,69-104
+  s_00d3c3a52cc65e::t_b04b47a869d8b3 47
+  s_00d3c3a52cc65e::t_ab51f82354327e 41-46
+  s_00d3c3a52cc65e::t_7082b51fc19936 40
+  s_00d3c3a52cc65e::t_10e503462012ee 105
+README.md
+  s_00d3c3a52cc65e::t_4ec81c8274e513 87,89
+scripts/verify-mcp.mjs
+  s_00d3c3a52cc65e::t_f2198721e6c931 7,45-47,221,287-288,332-333,335-344,383-390,396-401,414
+nuxt.config.ts
+  s_00d3c3a52cc65e::t_4ec81c8274e513 122
+scripts/verify-mcp-helpers.mjs
+  s_00d3c3a52cc65e::t_f2198721e6c931 67-71,73-74
+  s_00d3c3a52cc65e::t_4cb5d2675aa64a 1-66,72,75-132
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5ade4006d958d670f8a46725f5525b0745cafe4d",
+  "prompts": {},
+  "sessions": {
+    "s_00d3c3a52cc65e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1713c-e645-7e32-9cbf-bdec37e161a0",
+        "model": "gpt-6-luna"
+      },
+      "human_author": "xdewx <present150608@sina.com>"
+    }
+  }
+}
