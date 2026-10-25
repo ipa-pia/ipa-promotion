@@ -266,6 +266,8 @@ sequenceDiagram
 
 ```sql
 -- public.promotion 的 RLS 策略（幂等：可重复执行，结果一致）
+begin;
+
 alter table public.promotion enable row level security;
 
 -- 读：公开读已上架的（网站匿名读 + 任意已认证用户的 MCP 读都命中这条）
@@ -286,9 +288,13 @@ create policy "promotion_write_admin"
   on public.promotion for all
   using (auth.jwt() -> 'app_metadata' ->> 'role' = 'admin')
   with check (auth.jwt() -> 'app_metadata' ->> 'role' = 'admin');
+
+commit;
 ```
 
-**工件 ≠ 已上线**：该文件只是期望状态的版本化载体，本仓库的任何脚本都不会连接或执行到共享 Supabase 库。执行需要 leoking 逐次批准，且先用只读核验确认现状——手工执行过的库不需要重放，只有未执行过的库才需要按工件上线。只读核验查询同样来自真源（`rlsVerificationQueries()`），`pnpm test:mcp` 会在连接数据库的第一步就按它比对，策略名、cmd、`using`/`with check` 判据任一漂移都会报出具体差异。
+`begin;`/`commit;` 是必要的：逐句自动提交时，若在 `drop policy "promotion_select_active"` 之后失败，会留下"RLS 已开、公开读策略缺失"的静默零行状态。
+
+**工件 ≠ 已上线**：该文件只是期望状态的版本化载体，本仓库的任何脚本都不会连接或执行到共享 Supabase 库。执行需要 leoking 逐次批准，**且"核对现有策略是否与这三条重复/冲突"是执行的前置条件而不是收尾项**——工件只按名字覆盖这三条，从不删除其它策略；手工执行过的库里若另有宽策略（或同义但异名的策略），重放"成功"之后 RLS 仍是多条策略 OR 叠加的放宽状态，只有 `verify-mcp.mjs` 的漂移断言会把它报出来。只读核验查询同样来自真源（`rlsVerificationQueries()`），`pnpm test:mcp` 会在连接数据库的第一步就按它比对，策略名、`cmd`、`roles`、`permissive`、`using`/`with check` 任一与工件不是同一形状都会列出原始值。
 
 **策略缺失/不匹配的两种典型故障（都要在验收里覆盖）**
 
@@ -557,7 +563,7 @@ export default defineEventHandler(async (event) => {
 
 | # | 等级 | 风险 | 影响 | 缓解 / 归属 |
 |---|---|---|---|---|
-| **R1** | **P0** | **RLS 策略未落地 / 漂移**（产品已约定启用 RLS；策略已入库为 `supabase/migrations/20261026000000_promotion_rls.sql`，但目标库是否执行过仍需只读核验，执行需 leoking 批准） | ① 缺写策略 → admin 的 MCP 写工具全部失败（fail-closed，不脏数据，但功能不可用）；② 缺 admin 读策略 → `includeInactive=true` **静默返回空集**；③ 策略被写宽（如 `using (true)`）→ anon 可读全部行、退化为无 RLS | ① 按 §3.5 工件上线三条策略（执行需批准，上线前先跑只读核验确认现状）；② 应用层 `assertAdmin` **保留不放松**（策略写宽时的最后闸门）；③ 非 admin 读在数据访问层**强制**过滤 `is_active = true`；④ 验收脚本断言 A7/A8（含 admin 分支）+ 断言 `pg_class.relrowsecurity = true`；⑤ 断言与工件同源（`scripts/rls-policy-spec.mjs`），③ 类"写宽"与 `user_metadata` 判据会被显式判失败，工件与真源的漂移由 `pnpm test` 拦下 |
+| **R1** | **P0** | **RLS 策略未落地 / 漂移**（产品已约定启用 RLS；策略已入库为 `supabase/migrations/20261026000000_promotion_rls.sql`，但目标库是否执行过仍需只读核验，执行需 leoking 批准） | ① 缺写策略 → admin 的 MCP 写工具全部失败（fail-closed，不脏数据，但功能不可用）；② 缺 admin 读策略 → `includeInactive=true` **静默返回空集**；③ 策略被写宽（如 `using (true)`）→ anon 可读全部行、退化为无 RLS | ① 按 §3.5 工件上线三条策略（执行需批准，上线前先跑只读核验确认现状）；② 应用层 `assertAdmin` **保留不放松**（策略写宽时的最后闸门）；③ 非 admin 读在数据访问层**强制**过滤 `is_active = true`；④ 验收脚本断言 A7/A8（含 admin 分支）+ 断言 `pg_class.relrowsecurity = true`；⑤ 断言与工件同源（`scripts/rls-policy-spec.mjs`），③ 类"写宽"按规范化后的**整串相等**判定（含 `roles`/`permissive`），`user_metadata`/`raw_user_meta_data` 判据会被显式判失败，工件与真源的漂移由 `pnpm test` 拦下 |
 | **R2** | **P0（硬门禁）** | **Supabase OAuth 签发的 access token 的 claims 假设**：本方案假定其 `app_metadata` 含 `role`、且 `iss`/`aud` 与会话 token 一致 | 若 OAuth token 不带 `app_metadata` → 管理员判定恒为 false；**RLS 启用后影响更大**：`auth.jwt() -> 'app_metadata' ->> 'role'` 取不到 admin → RLS 写策略同样拒绝，MCP 写入**全线不可用**（fail-closed） | 阶段 3 验收脚本必须用**真实 OAuth 流程**取 token 并断言 `app_metadata.role === "admin"` 可判定（A11，**列为 MCP 上线前的硬门禁**）。若不成立 → 管理员判定需改为服务端查库（service role 读 `auth.users.raw_app_meta_data`），届时需单独立项 |
 | **R3** | P1 | **audience 未绑定 MCP resource**：Supabase OAuth 服务端可能忽略 RFC 8707 的 `resource` 参数，token 的 `aud` 只能是 `authenticated` | 为其它资源签发的 token 可能被重放到 MCP 端点 | 以 `iss` + `aud === "authenticated"` + 服务端 `getUser` 校验作为等效强度；记录为已知残留风险，接受 |
 | **R4** | P1 | **OAuth 同意页只授予 OIDC scope**（`openid/email/profile/phone`），无业务 scope | 不能用 scope 做业务鉴权 | 已定案：权限判定只用 `app_metadata.role`；写进 README 与工具描述 |
@@ -616,8 +622,8 @@ export default defineEventHandler(async (event) => {
 - [x] `promotion_select_active`（公开读已上架）
 - [x] `promotion_select_admin`（管理员读全部）
 - [x] `promotion_write_admin`（管理员写）
-- [ ] 用只读连接（`MCP_TEST_DATABASE_URL`）先核验目标库现状，再决定是否需要执行工件——手工执行过的库不必重放
-- [ ] 核对现有策略与上述三条是否重复/冲突（策略是 OR 叠加的，冗余策略不会报错但会掩盖缺失）；`verify-mcp.mjs` 会把未登记的额外策略判成漂移并列名
+- [ ] **执行前置**：用只读连接（`MCP_TEST_DATABASE_URL`）核对现有策略与上述三条是否重复/冲突（策略是 OR 叠加的，冗余策略不会报错但会掩盖缺失；工件从不删除未登记策略，重放"成功"后 RLS 仍可能是放宽态）；`verify-mcp.mjs` 会把未登记的额外策略判成漂移并列名
+- [ ] 用同一只读连接确认目标库现状，再决定是否需要执行工件——手工执行过且与工件同形的库不必重放
 - [ ] 把实际策略快照回填本文件 §3.5
 
 ### 阶段 2 · MCP server + 工具面 + 数据访问层
@@ -654,5 +660,5 @@ export default defineEventHandler(async (event) => {
 | A10 | `GET`/`DELETE /api/v1/mcp` → 405 且带 `Allow: POST` |
 | A11 | **R2 硬门禁**：真实 OAuth 流程拿到的 token 能把 admin 判定为 admin（非 admin 用户判定为非 admin）；且该 token 的 `app_metadata` 在 RLS 侧同样生效（写入成功即证明） |
 | A12 | MCP 响应体是 JSON-RPC（`jsonrpc`/`id`/`result`），**不是** `{code,data,message}` 信封（R7） |
-| A13 | **RLS 已启用**：`select relrowsecurity from pg_class where relname = 'promotion'` 为 `t`，且 `pg_policies` 中存在 §3.5 的三条策略——核验查询与断言同源（`scripts/rls-policy-spec.mjs` → `verify-mcp.mjs` 的 `evaluateRlsState()`），逐条比对策略名、`cmd`、`using`/`with check` 判据，并拒绝恒真 `using`、`user_metadata` 判据与未登记的额外策略 |
+| A13 | **RLS 已启用**：`select relrowsecurity from pg_class where relname = 'promotion'` 为 `t`，且 `pg_policies` 中存在 §3.5 的三条策略——核验查询与断言同源（`scripts/rls-policy-spec.mjs` → `verify-mcp.mjs` 的 `evaluateRlsState()`）。逐条比对策略名、`cmd`、`roles`（工件不带 `to`，隐含 `to public`）、`permissive`（工件不带 `as`，隐含 `as permissive`），并把 `using`/`with check` 规范化后（去空白、去 `::text`、去 `promotion.` 限定符、只剥分组括号、保留 `jwt()` 调用括号）与工件**整串相等**比对；恒真判据、`user_metadata`/`raw_user_meta_data` 判据、缺 `with check`、未登记的额外策略都判失败。等价但写法不同的手工表达式（如 `using (is_active)`、`<> 'notadmin'`、`IN ('admin', …)`、`判据 OR (true)`）会被判失败并列原始 `qual`/`with_check`/`roles`/`permissive` 全文、标记"未识别形状，需人工复核"——门禁的错向是"把正确库报成不合规"，不是"把写宽库放成绿灯" |
 | A14 | **非 admin 写隔离**：用非 admin 的真实 OAuth token 直连 PostgREST 尝试 insert/update → 被 RLS 拒绝（DB 层闸门也生效，不只是应用层 403） |

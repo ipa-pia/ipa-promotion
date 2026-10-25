@@ -128,7 +128,7 @@ async function verifyRlsPolicies() {
     const table = await db.query(queries.table)
     const policies = await db.query(queries.policies)
     const failed = []
-    for (const item of evaluateRlsState({ rlsEnabled: table.rows[0]?.enabled === true, policies: policies.rows })) {
+    for (const item of evaluateRlsState({ rlsEnabled: table.rows[0]?.enabled, policies: policies.rows })) {
       check(item.label, item.ok, item.detail)
       if (!item.ok) failed.push(`${item.label}${item.detail ? `（${item.detail}）` : ""}`)
     }

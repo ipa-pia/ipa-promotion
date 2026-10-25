@@ -2,6 +2,10 @@
 -- 真源：scripts/rls-policy-spec.mjs —— 改策略请改那里并重跑 pnpm test，不要手改本文件。
 -- 语义依据：docs/mcp-design.md §3.5。
 -- 合入本文件不等于已上线：执行到共享 Supabase 库需要 leoking 逐次批准。
+-- 执行前置：先用只读连接核对目标库现有策略是否与下面三条重复/冲突。本工件只覆盖这三条名字，
+-- 从不删除其它策略；手工库若另有宽策略，重放成功之后 RLS 仍是多条策略 OR 叠加的放宽状态。
+
+begin;
 
 alter table public.promotion enable row level security;
 
@@ -23,3 +27,5 @@ create policy "promotion_write_admin"
   on public.promotion for all
   using (auth.jwt() -> 'app_metadata' ->> 'role' = 'admin')
   with check (auth.jwt() -> 'app_metadata' ->> 'role' = 'admin');
+
+commit;
