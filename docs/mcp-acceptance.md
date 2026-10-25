@@ -4,7 +4,7 @@
 
 本记录对应 LEOK-19 的验收脚本、README 文档和对 `feat/mcp` 的独立检查。
 
-**当前复核基线：`feat/mcp` = `135fceac72bec5a5bf9e66523a70900f11c810b0`**（PR #15 合入后的 HEAD；上一个基线 `e0382070…` 是 PR #12 / #13 / #14 按序合入后的 HEAD；更早的 `cfed99c9…` 是 PR #11 升级 `@nuxt-tmpl/nuxt` 到 0.2.11 后的 HEAD）。`135fceac` 的文件树与取证时的工作树逐 blob 一致（README、`package.json`、`docs/mcp-design.md`、`docs/mcp-acceptance.md`、`scripts/rls-policy-spec.mjs`、`scripts/rls-policy-spec.test.mjs`、`scripts/verify-mcp.mjs`、`scripts/typecheck-with-provider.mjs`、`supabase/migrations/20261026000000_promotion_rls.sql` 共 9 个），所以下面「离线证据」的仓库内检查对 `135fceac` 成立；Vercel Preview 的观测对象是 `cfed99c9` 的部署，与更早的部署一起不再作为当前状态证据（观测方法保留在文末）。PR #7（`feat/mcp` → `main`）的合并与发布由 leoking 决定。
+**当前复核基线：`feat/mcp` = `cd924a402d7ddbeee641e413df3eab9154434b13`**（PR #16 合入后的 HEAD；上一个基线 `135fceac…` 是 PR #15 合入后的 HEAD；更早的 `e0382070…` 是 PR #12 / #13 / #14 按序合入后的 HEAD，`cfed99c9…` 是 PR #11 升级 `@nuxt-tmpl/nuxt` 到 0.2.11 后的 HEAD）。`cd924a40` 的文件树与取证时的工作树逐 blob 一致（README、`package.json`、`docs/mcp-design.md`、`docs/mcp-acceptance.md`、`scripts/rls-policy-spec.mjs`、`scripts/rls-policy-spec.test.mjs`、`scripts/verify-mcp.mjs`、`scripts/typecheck-with-provider.mjs`、`supabase/migrations/20261026000000_promotion_rls.sql` 共 9 个），所以下面「离线证据」的仓库内检查对 `cd924a40` 成立；Vercel Preview 的观测对象是 `cfed99c9` 的部署，与更早的部署一起不再作为当前状态证据（观测方法保留在文末）。PR #7（`feat/mcp` → `main`）的合并与发布由 leoking 决定。
 
 **当前结论：模板路由、MCP HTTP 边界与全部凭据无关项已独立复验通过；真实 OAuth/RLS 端到端验收尚未通过。** 本地环境没有 `.env` 或 MCP 测试变量；Vercel Preview 已配置 Supabase provider、URL 和 anon key，但还没有真实 OAuth 管理员/普通用户 token、管理员浏览器会话 Cookie 或数据库只读连接。不能据此声称 `pnpm test:mcp` 或生产上线门禁通过。PR #7 的合并与发布由 leoking 决定，不由开发侧推进。
 
@@ -35,7 +35,7 @@
 | `GET /oauth/unknown` | 302 → `/`（未误放行相似路径） |
 | `GET /.well-known/oauth-protected-resource` 无后缀 | 200，`resource` 退化为 `<origin>/` —— 与 README 的「必须带后缀」警告一致 |
 
-## RLS 工件（#12 已合入 `feat/mcp`；复验补强见 #15 与本 PR）
+## RLS 工件（#12 已合入 `feat/mcp`；复验补强见 #15 / #16 与本 PR）
 
 `promotion` 表的三条策略与只读核验查询现在有了仓库内真源：`scripts/rls-policy-spec.mjs`。
 
@@ -44,13 +44,15 @@
 | `scripts/rls-policy-spec.mjs` | 策略名、`cmd`、`using` / `with check` 判据、`roles`（工件不带 `to` → 期望恰为 `public`）与 `permissive`（工件不带 `as` → 期望 permissive）、禁用谓词（`user_metadata` / `raw_user_meta_data`）、幂等 migration SQL 渲染、只读核验查询（`pg_class` + `pg_policies`）、`evaluateRlsState()` 与 `evaluateRoles()` 比对 |
 | `supabase/migrations/20261026000000_promotion_rls.sql` | 上述真源渲染出的 migration 工件，幂等（`drop policy if exists` + `create policy`），整体包在 `begin;`/`commit;` 里；由 `pnpm test` 做逐字节漂移校验（本 PR 未改渲染语义，blob 仍是 `86fd3f03`） |
 | `scripts/verify-mcp.mjs` | `verifyRlsPolicies()` 不再自带策略名与正则，改为调用 `evaluateRlsState()`，一次列全所有与工件不符的项；`pg_class` 查不到表时按「查询无结果」报，不与「RLS 未开启」混为一谈 |
-| `scripts/rls-policy-spec.test.mjs` | 56 项：工件↔真源↔§3.5 三者一致（§3.5 块内的**语句集合必须等于真源渲染出的语句集合**，多一条少一条都红；三条判据逐字同形；`to`/`as` 子句在语句内解析并与期望做集合相等，工件与 §3.5 走同一份检查），加 A7/A8b 类故障、9 个库侧写宽/收窄变异（`判据 OR (true)`、`is_active = true OR is_active = false`、`<> 'notadmin'`、`IN ('admin', 'service')`、`with check … OR (true)`、`to authenticated`、`to public, authenticated`、`as restrictive`、`raw_user_meta_data` 判据；`using (true)` 恒真、缺 `with check`、只读策略带 `with check`、`cmd` 收窄另立用例）、4 个工件/块侧授权子句变异（V5 `as restrictive`、V6 `to public, promotion_superuser`、V7 同行 `to authenticated`、V8 只改 §3.5 的块）、8 条未登记 DDL（force RLS、grant、revoke、drop table、truncate、owner to、create role、set role）、以及 5 项 `roles` 方向判定 |
+| `scripts/rls-policy-spec.test.mjs` | 67 项，三层门禁：**① 冻结的语句形状上限**（字面量写在测试里、不从渲染器取，逐条整句匹配，工件与 §3.5 两块同受约束；子句段要求至少写出一条）、**② §3.5 块 ↔ 真源渲染结果的语句集合相等**（多一条少一条都红）、**③ 逐条判据与 `to`/`as` 子句**（子句在语句内部解析，解析出来就与期望做集合相等，确实省略才补 Postgres 默认；head 里有 `to` 却没解析出角色集时判「未识别形状，需人工复核」而不补默认值）。夹具：A7/A8b 类故障、9 个库侧写宽/收窄变异（`判据 OR (true)`、`is_active = true OR is_active = false`、`<> 'notadmin'`、`IN ('admin', 'service')`、`with check … OR (true)`、`to authenticated`、`to public, authenticated`、`as restrictive`、`raw_user_meta_data` 判据；`using (true)` 恒真、缺 `with check`、只读策略带 `with check`、`cmd` 收窄另立用例）、4 个工件/块侧授权子句变异（V5 `as restrictive`、V6 `to public, promotion_superuser`、V7 同行 `to authenticated`、V8 只改 §3.5 的块）、8 条未登记 DDL（force RLS、grant、revoke、drop table、truncate、owner to、create role、set role）、5 项 `roles` 方向判定、2 项「有 `to` 未识别」（R1：缺 `FOR` 的角色集、策略名内含字面量 `using (` 的窗口截断）、4 项渲染器被改动后的上限用例（T11 `delete from`、T15 `disable row level security`、T16 换拼法的 `revoke usage`、T9 `drop table if exists`——这四条在只看集合相等时两边同改仍全绿）、1 项正宗子句顺序（T17：把工件与 §3.5 一起改写成 `as permissive for select to public`，块识别、形状上限、结构断言必须仍为绿，R4）、3 项 `FOR` 缺省与角色名容错（两条读策略缺 `FOR` 时**上限放行、结构断言必须报 `for 子句是 all，真源要求 select`**；写策略缺 `FOR` 与 `FOR ALL` 同义、结构断言为绿；三条子句全省略时上限与结构断言各自都拦得住；`to "promotion-writer"` / `to "promotion.writer"` 不撞上限） |
+
+**上限与真源之间是刻意保留的第二份判据文本。** `allowedStatementPatterns()` 里那三条 `using` / `with check` 字面量不是冗余副本，去重会把门禁降级：复验实测把公开读判据放宽成 `is_active = true OR 1 = 1` 并同步 spec + 渲染器 + §3.5 三处，集合相等按构造看不见差异，**只有这份字面量会红**。代价是改一次合法判据要同步两处，失败消息会原样打印被改的整条语句，定位不难。**同理，上限的子句段要求至少写出一条**：Postgres 省略 `FOR` 的缺省是 `FOR ALL`（官方文档 `ALL is the default.`），只读策略漏写 `for select` 等于当场开出写面。这条安全**不靠量化符**——结构断言按 Postgres 的真实缺省把没有 `FOR` 的写法判成 `all` 再与真源比对，所以将来有人按旧注释把子句段放宽成可选时，红由判定本体报出（夹具 `R4 缺省` 三条就是这条的回归）。
 
 比对强度：`using`/`with check` 规范化（去空白、去 `::text`、去 `promotion.` 限定符、只剥分组括号并保留 `jwt()` 调用括号）后与工件**整串相等**，不是词元子串命中。形状不同但语义等价的手工写法会判失败，并在报错里列出原始 `qual`/`with_check`/`roles`/`permissive` 全文、标记「未识别形状，需人工复核」——门禁可能的错向是「把正确库报成不合规、由人复核」，不是「把写宽库放成绿灯」。`roles` 分三种不符：缺少工件要求的角色是真实**收窄**（这些角色命中不到该策略）；多出的角色在工件已授 `public`（角色全集）时是**等价冗余**，判失败并标记「未识别形状·等价冗余·需人工复核」；工件没授 `public` 时多出的角色才是授权面扩大。未登记策略的 detail 附该行 `cmd`/`permissive`/`roles`/`qual` 原文，叠加方向由 `permissive` 算出而不是无条件说「放宽」。真实库的 deparse 快照仍待凭据到手后用那次只读核验回填夹具。
 
 **写工件 ≠ 执行工件。** 本仓库不含任何连接或变更目标 Supabase 库的脚本；执行到共享库需要 leoking 逐次批准。**执行前置**（不是收尾项）：先用只读连接核对目标库现有策略是否与这三条重复或冲突（`MCP_TEST_DATABASE_URL` + `pnpm test:mcp` 的第一段，或手工执行 `rlsVerificationQueries()` 里的两条 `select`）。工件只按名字覆盖这三条、从不删除其它策略，所以手工库里另有未登记策略时，重放成功之后 RLS 仍是这些策略与三条叠加的状态（`permissive` 的 OR 叠加＝放宽，`restrictive` 的 AND 叠加＝收窄），只有漂移断言会报出来；手工执行过且与工件同形的库不必重放。
 
-**按角色分授是发版前的设计变更。** 今天把 `roles` 钉成 `{public}` 是与工件省略 `to`/`as` 写法唯一自洽的取值，不是因为分授不可行。真要按角色分授（例如公开读拆成 `anon` + `authenticated`），必须同时改 `renderPolicySql()` 让它显式渲染 `to`/`as`、同步 §3.5 的 SQL 块与期望集。两个方向的暴露点不对称，按实测写：**只改真源的期望（工件不动）本地就红**——子句缺省按 Postgres 的 `TO public / AS PERMISSIVE` 补齐后与期望直接比对，不需要连库；过去只有连上真实库才暴露的是**只改工件侧的 `to`/`as` 而期望不动**，尤其把 `to authenticated` 与 `for select` 写成同一行时，行首锚定的探测会当成"省略"从而整条空转。这类漏现在由「在语句内解析子句 + 生效角色集做集合相等」的门禁拦下（V6/V7/V8 已进回归夹具），§3.5 的块也走同一份检查。**分授必须在合入这条子句解析门禁之后才落地**，且这类改动应在执行工件之前定。
+**按角色分授是发版前的设计变更。** 今天把 `roles` 钉成 `{public}` 是与工件省略 `to`/`as` 写法唯一自洽的取值，不是因为分授不可行。**`to public` 是角色全集，覆盖此后 `create role` 新建的任何角色**——那些角色不需要任何授权动作就自动落在三条公开读策略里；反过来 `service_role` 带 `BYPASSRLS`、不受策略约束，所以"新角色没被 grant 过、自然兜得住"在 PostgREST 路径上看似成立、语义上并不等价。要排除未来角色只有分授一条路：必须同时改 `renderPolicySql()` 让它显式渲染 `to`/`as`、同步 §3.5 的 SQL 块与期望集这三处。两个方向的暴露点不对称，按实测写：**只改真源的期望（工件不动）本地就红**——子句解析成功后与期望直接比对，确实省略时补齐的 Postgres 默认值也直接比对，不需要连库；在子句解析门禁（#16）合入之前，只有连上真实库才暴露的漏洞是**只改工件侧的 `to`/`as` 而期望不动**，尤其把 `to authenticated` 与 `for select` 写成同一行时，行首锚定的探测会当成"省略"从而整条空转。这类漏现在由「在语句内解析子句 + 生效角色集做集合相等 + 认不出就判未识别」的门禁拦下（V6/V7/V8 与两条 R1 用例已进回归夹具），§3.5 的块也走同一份检查。**分授必须在合入这条子句解析门禁之后才落地**，且这个取舍应在执行工件之前定（事后改要重放）；结构断言与形状上限都已按子句顺序无关实现，正宗的 `as permissive for select to public` 写法不会打红结构断言（R4，T17 把关）。
 
 ## 独立实现检查
 
@@ -74,7 +76,7 @@
 | `pnpm typecheck:supabase` | 通过（#13 已合入）；等价于原先手工执行的 `NUXT_PUBLIC_AUTH_PROVIDER=supabase pnpm exec nuxt prepare && NUXT_PUBLIC_AUTH_PROVIDER=supabase pnpm typecheck` |
 | `NUXT_PUBLIC_AUTH_PROVIDER=supabase NUXT_PUBLIC_SUPABASE_URL=https://dummy-project.supabase.co NUXT_PUBLIC_SUPABASE_ANON_KEY=dummy pnpm build` | 通过；仅用于本地 build/路由产物验证，不是目标项目联调；Nuxt Image `nuxt/server` unresolved warning 仍出现 |
 | `pnpm lint` | 通过，0 error；有 2 条既有 warning（`app/error.vue`、`server/api/auth/[...all].ts`） |
-| `pnpm test` | 通过，5 个测试文件、89 项测试（33 项既有 + `scripts/rls-policy-spec.test.mjs` 的 56 项 RLS 工件/断言校验） |
+| `pnpm test` | 通过，5 个测试文件、100 项测试（33 项既有 + `scripts/rls-policy-spec.test.mjs` 的 67 项 RLS 工件/断言校验） |
 | `node --check scripts/verify-mcp.mjs` | 通过 |
 | `node scripts/verify-mcp-guard-flow.mjs` | 通过；注入 4 项故障后按设计累计失败并以 exit 1 退出 |
 | `pnpm test:mcp` | 按设计以 exit 1 退出，清楚列出缺失的 6 项真实环境配置；未启动服务、未写测试数据，因此不是端到端通过 |
@@ -95,7 +97,7 @@
 - [ ] 获取真实 OAuth 管理员和普通用户 access token；Auth `getUser` 验证 token 后，确认管理员仅由 `app_metadata.role=admin` 判定。**这是本能力的单点风险**：OAuth 签发的 JWT 若不带 `app_metadata.role`，六个写工具对管理员一律 403，RLS 写策略同样拒绝。
 - [ ] 管理员浏览器会话 Cookie 可访问 `GET /api/promotion`，用于与 MCP 读对象进行结构和值对照。
 - [ ] 用只读数据库连接核实目标 `promotion` 表的 `relrowsecurity` 与策略内容符合 `supabase/migrations/20261026000000_promotion_rls.sql`（`cmd`/`roles`/`permissive` 逐列比对，`using`/`with check` 规范化后整串相等；表达式形状不同会判失败并附原始值、标记「未识别形状，需人工复核」，需人确认后回填 §3.5 快照）。
-- [ ] **执行工件的前置**：核对手工库现有策略是否与工件的三条重复或冲突（含同义但异名的策略）。工件从不删除未登记策略，重放「成功」后 RLS 仍可能是未登记策略与三条叠加的状态（`permissive` 的 OR 叠加＝放宽，`restrictive` 的 AND 叠加＝收窄）；若目标库尚未执行过该工件，需 leoking 批准后再上线。
+- [ ] **执行工件的前置**：核对手工库现有策略是否与工件的三条重复或冲突（含同义但异名的策略）。工件从不删除未登记策略，重放「成功」后 RLS 仍可能是未登记策略与三条叠加的状态（`permissive` 的 OR 叠加＝放宽，`restrictive` 的 AND 叠加＝收窄）；若目标库尚未执行过该工件，需 leoking 批准后再上线。**别用「新角色没被 grant 过所以自然兜住」代替核验**：工件不写 `to` 即 `to public`，`PUBLIC` 覆盖此后新建的任何角色，而 `service_role` 带 `BYPASSRLS` 不受策略约束。
 - [ ] 在真实目标库完成管理员新增、修改、软下架、普通用户隔离及 RLS 直连拒绝测试，并确认临时记录清理成功。
 - [x] 最终 Preview 的发现元数据、模板 consent 页面、无 token 401 challenge、GET/DELETE 405 已通过 Vercel 授权绕过独立验证；平台 SSO 302 已与应用响应区分。
 - [ ] 真实 `pnpm test:mcp` 在目标 Supabase 上完整通过，并确认新增测试数据清理成功。
