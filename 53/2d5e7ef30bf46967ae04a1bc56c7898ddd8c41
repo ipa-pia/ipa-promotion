@@ -1,0 +1,34 @@
+nuxt.config.ts
+  s_00d3c3a52cc65e::t_33f9072952bed5 4,137,140-141
+  s_00d3c3a52cc65e::t_013714c9ee9bc2 138
+README.md
+  s_00d3c3a52cc65e::t_7a635656ffb7ff 87,89
+docs/mcp-design.md
+  s_00d3c3a52cc65e::t_7a635656ffb7ff 20,51-52,492
+  s_00d3c3a52cc65e::t_f1d576db15fb68 490
+  s_00d3c3a52cc65e::t_9fcbfe5e6d1162 602
+server/utils/auth-routes.test.ts
+  s_00d3c3a52cc65e::t_33f9072952bed5 1-49
+shared/utils/auth-routes.ts
+  s_00d3c3a52cc65e::t_33f9072952bed5 1-14
+patches/@nuxt-tmpl__nuxt@0.2.10.patch
+  s_00d3c3a52cc65e::t_6b09b7fd7fd5e4 2,16,25-35
+pnpm-lock.yaml
+  s_00d3c3a52cc65e::t_ff5d5cd502964a 18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "532d5e7ef30bf46967ae04a1bc56c7898ddd8c41",
+  "prompts": {},
+  "sessions": {
+    "s_00d3c3a52cc65e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1713c-e645-7e32-9cbf-bdec37e161a0",
+        "model": "gpt-6-luna"
+      },
+      "human_author": "xdewx <present150608@sina.com>"
+    }
+  }
+}
