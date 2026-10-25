@@ -53,20 +53,21 @@ pnpm dev
 
 ## MCP（Model Context Protocol）
 
-站点通过模板 `@nuxt-tmpl/nuxt@0.2.10` 暴露 MCP 相关能力（`nuxtTmpl.mcp.enabled: true`）。
+站点通过模板 `@nuxt-tmpl/nuxt@0.2.11`（配套 `@nuxt-tmpl/core@0.2.11`）暴露 MCP 相关能力（`nuxtTmpl.mcp.enabled: true`）。
 
 ### 硬前置条件
 
-- `NUXT_PUBLIC_AUTH_PROVIDER=supabase`：模板**只在 supabase provider 下**注册 MCP 发现端点与 OAuth 同意页。换成其他 provider 或留空，即使开关打开也不会有任何 MCP 端点（静默失效，不报错）。
+- `NUXT_PUBLIC_AUTH_PROVIDER=supabase`：OAuth consent 页面需要 Supabase；0.2.11 的保护资源发现元数据注册不再依赖 provider，但本项目的 MCP 授权服务器仍是 Supabase。
 - `NUXT_PUBLIC_AUTH_PROVIDER` 是**构建期常量**（模板 setup 阶段读取）：改动后必须重新构建，不是运行时开关。
-- 将来若要支持 better-auth/clerk 的 MCP，模板不支持 → 需自建（**技术债**，届时另行立项）。
+- `@nuxt-tmpl/nuxt` 与 `@nuxt-tmpl/core` 必须保持同为 `0.2.11`；`@ipa-vue/core` 固定由 workspace override 提升至 `0.3.13`。发布包还含 `workspace:*` 依赖，`@ipa-schema/api` 的 override 是独立安装前置。
+- `nuxtTmpl.mcp.authEntries` 在单 issuer 配置下保持未设置（默认空值）；不要设置字符串 `"[]"`。本次仍按单 Supabase issuer 运作，不增加多入口或 token 验证配置。
 
 ### 模板复用边界
 
 | 部分 | 归属 | 说明 |
 |---|---|---|
-| `/.well-known/oauth-protected-resource`（RFC 9728 发现元数据） | **模板** | `nuxtTmpl.mcp.enabled: true` 且 provider=supabase 时自动注册，禁止自建 |
-| `/oauth/consent` 同意页 | **模板** | `runtime/pages/oauth/consent.vue` + `DefaultOAuthConsent.vue` 自动注册，禁止在 `app/pages/` 下自建同名页（会顶掉模板实现）；定制样式走 `useAuthForms({ OAuthConsentForm })` 包装，不要从零重写 |
+| `/.well-known/oauth-protected-resource`（RFC 9728 发现元数据） | **模板** | `nuxtTmpl.mcp.enabled: true` 时自动注册，不再依赖 auth provider；禁止自建 |
+| `/oauth/consent` 同意页 | **模板** | `runtime/pages/oauth/consent.vue` + `DefaultOAuthConsent.vue` 自动注册，仍依赖 Supabase provider；禁止在 `app/pages/` 下自建同名页（会顶掉模板实现）；定制样式走 `useAuthForms({ OAuthConsentForm })` 包装，不要从零重写 |
 | OAuth issuer 推导 | **模板** | 默认 `authorization_servers[0] = <NUXT_PUBLIC_SUPABASE_URL origin>/auth/v1`；非 Supabase 授权服务器用 `nuxtTmpl.mcp.authorizationServer` 显式覆盖 |
 | `/api/v1/mcp` MCP 端点与工具面 | **项目自建** | Streamable HTTP 无状态端点与六个推广链接工具（见 `docs/mcp-design.md`） |
 

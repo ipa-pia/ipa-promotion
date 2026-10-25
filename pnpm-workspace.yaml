@@ -1,19 +1,18 @@
 packages:
   - "."
 overrides:
-  # 模板 vercel 分支原本 override 到这些版本，但它们已从 registry 撤下，
-  # 直接安装会 ERR_PNPM_NO_MATCHING_VERSION。下面改为 registry 上实际存在的版本。
-  # 0.2.10 起模板修正了 MCP 发现元数据的 issuer（改为 `${SUPABASE_URL}/auth/v1`），
-  # 且同意页复用模板内实现，故项目不再自建发现路由/同意页（IPA-86 模板优先）。
-  "@nuxt-tmpl/nuxt": "0.2.10"
-  "@nuxt-tmpl/core": "0.2.10"
-  "@ipa-vue/core": "0.3.12"
+  # Keep the companion template core aligned with nuxt; both registry 0.2.10
+  # releases were withdrawn after 0.2.11 became the published version.
+  "@nuxt-tmpl/nuxt": "0.2.11"
+  "@nuxt-tmpl/core": "0.2.11"
+  "@ipa-vue/core": "0.3.13"
   "@ipa-vue/element-plus": "0.3.12"
   # The published UI package declares a monorepo-only peer that is not published
   # to the registry at all and is unused here, so drop the peer requirement.
   "@ipa-vue/element-plus>@ipa-schema/ai": "-"
   # @nuxt-tmpl/nuxt 的发布产物把依赖写成了 workspace:*（monorepo 专用协议），
   # 单独安装时 pnpm 找不到工作区包。指向 registry 上实际发布的版本。
+  "@ipa-schema/api": "1.1.4"
   "@ipa-schema/logging": "1.0.0"
   "@ipa-schema/auth": "1.0.0"
 allowBuilds:
@@ -31,4 +30,4 @@ minimumReleaseAgeExclude:
   - "@ipa-vue/*"
   - "@ipa-schema/*"
 patchedDependencies:
-  '@nuxt-tmpl/nuxt@0.2.10': patches/@nuxt-tmpl__nuxt@0.2.10.patch
+  '@nuxt-tmpl/nuxt@0.2.11': patches/@nuxt-tmpl__nuxt@0.2.11.patch

@@ -142,10 +142,10 @@ export default defineNuxtConfig({
     },
     mcp: {
       // 模板默认 mcp.enabled: false，必须显式打开，否则发现元数据不会注册（静默 404）。
-      // 模板的 MCP 支持强绑定 supabase provider：NUXT_PUBLIC_AUTH_PROVIDER 必须为 supabase，
-      // 且该变量是构建期常量，改动后需要重新构建。
+      // Consent 仍需要 supabase provider；protected-resource metadata 在 0.2.11
+      // 已不再依赖 provider。本项目授权服务器仍保持单一 Supabase issuer。
       enabled: true,
-      // 模板 0.2.10 默认按 `${NUXT_PUBLIC_SUPABASE_URL} origin + /auth/v1` 推导 issuer。
+      // 模板默认按 `${NUXT_PUBLIC_SUPABASE_URL} origin + /auth/v1` 推导 issuer。
       // 若部署到 Supabase 子路径或非 Supabase 授权服务器，需显式覆盖，
       // 否则严格客户端会在 RFC 8414 §3.3 判定 Issuer mismatch。
       // authorizationServer: "https://<project>.supabase.co/auth/v1",
