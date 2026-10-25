@@ -79,6 +79,9 @@ function expectRlsSqlBlock(sql) {
   expect(sql, "缺少 enable row level security").toContain(`alter table ${RLS_TARGET.qualified} enable row level security;`)
   expect(sql, "缺少事务包装 begin;").toMatch(/^begin;$/m)
   expect(sql, "缺少事务包装 commit;").toMatch(/^commit;$/m)
+  // enable 三条之外不许夹带别的 DDL：force row level security 会让表 owner 也受 RLS 约束，
+  // 在 Supabase 上正好打断 service_role 的写入；grant/revoke 改变授权面。两者都不在工件里。
+  expect(sql, "块里夹带了工件之外的 DDL").not.toMatch(/\b(force\s+row\s+level\s+security|grant|revoke)\b/i)
   for (const policy of RLS_POLICIES) {
     const statement = createPolicyStatement(sql, policy.name)
     expect(statement, `缺少 create policy ${policy.name}`).not.toBeNull()
@@ -131,7 +134,7 @@ const MUTATIONS = [
     description: "同名策略改成 to authenticated",
     check: selectActiveCheck,
     mutations: { promotion_select_active: { roles: ["authenticated"] } },
-    expectDetail: ["authenticated", "工件要求 public"],
+    expectDetail: ["授权面比工件窄", "缺少 public"],
   },
   {
     id: "M10",
@@ -139,6 +142,13 @@ const MUTATIONS = [
     check: writeAdminCheck,
     mutations: { promotion_write_admin: { permissive: false } },
     expectDetail: ["restrictive"],
+  },
+  {
+    id: "M14",
+    description: "同名策略写成 to public, authenticated（授权面是工件超集）",
+    check: selectActiveCheck,
+    mutations: { promotion_select_active: { roles: ["public", "authenticated"] } },
+    expectDetail: ["等价冗余", "未识别形状·等价冗余·需人工复核"],
   },
   {
     id: "M13",
@@ -192,6 +202,39 @@ describe("promotion RLS 工件与真源一致", () => {
   it("§3.5 删掉事务包装时断言失败", () => {
     const withoutTransaction = designRlsBlocks()[0].replace(/^begin;$/m, "").replace(/^commit;$/m, "")
     expect(() => expectRlsSqlBlock(withoutTransaction)).toThrow(/begin/)
+  })
+
+  it("§3.5 夹带 force row level security 时断言失败", () => {
+    const forced = designRlsBlocks()[0].replace(
+      `alter table ${RLS_TARGET.qualified} enable row level security;`,
+      `alter table ${RLS_TARGET.qualified} enable row level security;\nalter table ${RLS_TARGET.qualified} force row level security;`,
+    )
+    expect(() => expectRlsSqlBlock(forced)).toThrow(/DDL/)
+  })
+
+  it("§3.5 夹带 grant/revoke 时断言失败", () => {
+    for (const ddl of [`grant select on ${RLS_TARGET.qualified} to anon;`, `revoke all on ${RLS_TARGET.qualified} from public;`]) {
+      expect(() => expectRlsSqlBlock(`${designRlsBlocks()[0]}\n${ddl}`), ddl).toThrow(/DDL/)
+    }
+  })
+
+  // 真源的 roles/permissive 期望与工件的省略写法必须同进同退：只改期望会让断言与工件各说各话，
+  // 而这个矛盾只有连上真实库核验才暴露（复验实测：改期望 + 同步夹具后 30 项仍全绿）。
+  it("to/as 不变量：工件省略 to/as 时，期望必须恰好是 public + permissive", () => {
+    const statements = RLS_POLICIES.map(policy => createPolicyStatement(renderMigrationSql(), policy.name))
+    const omitsClause = statements.every(statement => !/^\s*(to|as)\s+[a-z]/im.test(statement))
+    if (omitsClause) {
+      for (const policy of RLS_POLICIES) {
+        expect(policy.roles, `${policy.name} 的 roles 期望`).toEqual(["public"])
+        expect(policy.permissive, `${policy.name} 的 permissive 期望`).toBe(true)
+      }
+    }
+    else {
+      for (const [index, policy] of RLS_POLICIES.entries()) {
+        expect(statements[index], policy.name).toContain(`to ${policy.roles.join(", ")}`)
+        expect(statements[index], policy.name).toContain(`as ${policy.permissive ? "permissive" : "restrictive"}`)
+      }
+    }
   })
 
   it("工件里没有 client 可改的 user_metadata / raw_user_meta_data 判据", () => {
@@ -271,11 +314,68 @@ describe("verify-mcp 的 RLS 断言只认真源", () => {
     expect(writeAdminCheck(evaluateWith({ promotion_write_admin: { cmd: "SELECT" } })).ok).toBe(false)
   })
 
+  // 无网夹具：pg_policies 里这三行形状都不需要连库才能造出来。
+  it("策略没有 using（qual 为 NULL）时判失败并显示原始空值", () => {
+    const check = selectActiveCheck(evaluateWith({ promotion_select_active: { qual: null } }))
+    expect(check.ok, check.detail).toBe(false)
+    expect(check.detail).toContain("qual 为空")
+    expect(check.detail).toContain("qual=（空）")
+  })
+
+  it("roles 是空数组时判为收窄（没有任何角色命中）而不是缺失字段", () => {
+    const check = selectActiveCheck(evaluateWith({ promotion_select_active: { roles: [] } }))
+    expect(check.ok, check.detail).toBe(false)
+    expect(check.detail).toContain("缺少 public")
+    expect(check.detail).toContain("roles=（空数组）")
+  })
+
+  it("只读策略却带 with check 时判失败：工件没有登记这一项", () => {
+    const check = selectAdminCheck(evaluateWith({ promotion_select_admin: { with_check: ADMIN_EXPRESSION } }))
+    expect(check.ok, check.detail).toBe(false)
+    expect(check.detail).toContain("只读策略却带 with check")
+    expect(check.detail).toContain("工件未登记")
+  })
+
   it("目标库存在未登记的额外策略时报漂移", () => {
     const rows = [...committedRows(), { policyname: "promotion_anyone_writes", cmd: "ALL", qual: "true", with_check: "true", roles: ["public"], permissive: true }]
     const check = evaluateRlsState({ rlsEnabled: true, policies: rows }).at(-1)
     expect(check.ok).toBe(false)
     expect(check.detail).toContain("promotion_anyone_writes")
+    for (const column of ["cmd=", "permissive=", "qual="]) expect(check.detail, column).toContain(column)
+    expect(check.detail).toContain("方向是放宽")
+  })
+
+  // 未登记策略不等于放宽：restrictive 的与工件三条 AND 叠加会收窄。
+  // 无条件写"仍是 OR 放宽态"会把复核方向带偏，所以方向由 permissive 取值算出来。
+  it("未登记的 restrictive 策略报收窄而不是放宽", () => {
+    const rows = [...committedRows(), { policyname: "legacy_promotion_lock", cmd: "SELECT", qual: `(${RLS_TARGET.table}.is_active) = false`, with_check: null, roles: ["public"], permissive: false }]
+    const check = evaluateRlsState({ rlsEnabled: true, policies: rows }).at(-1)
+    expect(check.ok).toBe(false)
+    expect(check.detail).toContain("都是 restrictive")
+    expect(check.detail).toContain("方向是收窄")
+    expect(check.detail).not.toContain("方向是放宽")
+    expect(check.detail).toContain(`qual="(${RLS_TARGET.table}.is_active) = false"`)
+  })
+
+  it("未登记策略同时有 permissive 与 restrictive 时报两个方向", () => {
+    const rows = [
+      ...committedRows(),
+      { policyname: "legacy_wide_read", cmd: "SELECT", qual: "true", with_check: null, roles: ["public"], permissive: true },
+      { policyname: "legacy_narrow_read", cmd: "SELECT", qual: "false", with_check: null, roles: ["public"], permissive: false },
+    ]
+    const check = evaluateRlsState({ rlsEnabled: true, policies: rows }).at(-1)
+    expect(check.ok).toBe(false)
+    expect(check.detail).toContain("两个方向同时存在")
+    expect(check.detail).toContain("legacy_narrow_read")
+    expect(check.detail).toContain("legacy_wide_read")
+  })
+
+  it("未登记策略的 permissive 不是布尔值时不猜方向", () => {
+    const rows = [...committedRows(), { policyname: "legacy_unknown", cmd: "SELECT", qual: "true", with_check: null, roles: ["public"], permissive: null }]
+    const check = evaluateRlsState({ rlsEnabled: true, policies: rows }).at(-1)
+    expect(check.ok).toBe(false)
+    expect(check.detail).toContain("permissive 取值未识别")
+    expect(check.detail).toContain("未识别形状，需人工复核")
   })
 
   for (const mutation of MUTATIONS) {

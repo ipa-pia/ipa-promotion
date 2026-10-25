@@ -294,7 +294,9 @@ commit;
 
 `begin;`/`commit;` 是必要的：逐句自动提交时，若在 `drop policy "promotion_select_active"` 之后失败，会留下"RLS 已开、公开读策略缺失"的静默零行状态。
 
-**工件 ≠ 已上线**：该文件只是期望状态的版本化载体，本仓库的任何脚本都不会连接或执行到共享 Supabase 库。执行需要 leoking 逐次批准，**且"核对现有策略是否与这三条重复/冲突"是执行的前置条件而不是收尾项**——工件只按名字覆盖这三条，从不删除其它策略；手工执行过的库里若另有宽策略（或同义但异名的策略），重放"成功"之后 RLS 仍是多条策略 OR 叠加的放宽状态，只有 `verify-mcp.mjs` 的漂移断言会把它报出来。只读核验查询同样来自真源（`rlsVerificationQueries()`），`pnpm test:mcp` 会在连接数据库的第一步就按它比对，策略名、`cmd`、`roles`、`permissive`、`using`/`with check` 任一与工件不是同一形状都会列出原始值。
+**工件 ≠ 已上线**：该文件只是期望状态的版本化载体，本仓库的任何脚本都不会连接或执行到共享 Supabase 库。执行需要 leoking 逐次批准，**且"核对现有策略是否与这三条重复/冲突"是执行的前置条件而不是收尾项**——工件只按名字覆盖这三条，从不删除其它策略；手工执行过的库里若另有未登记策略（或同义但异名的策略），重放"成功"之后 RLS 仍是这些策略与三条叠加的状态：`permissive` 的与三条 OR 叠加（放宽），`restrictive` 的再与之 AND 叠加（收窄），两个方向都可能出错，只有 `verify-mcp.mjs` 的漂移断言会把它报出来——断言按未登记行的 `permissive` 取值算方向，不无条件写"放宽"。只读核验查询同样来自真源（`rlsVerificationQueries()`），`pnpm test:mcp` 会在连接数据库的第一步就按它比对，策略名、`cmd`、`roles`、`permissive`、`using`/`with check` 任一与工件不是同一形状都会列出原始值。
+
+**为什么 `roles` 钉成 `{public}`**：工件的 `create policy` 不写 `to`/`as`，Postgres 的隐含语义就是 `to public as permissive`，所以 `roles` 期望只能是 `public`（`pg_policies.roles` 渲染为 `{public}`）。这是与省略写法**唯一自洽**的取值，不是说按角色分授不可行。真要分授（例如把公开读拆成 `anon` + `authenticated`）属于发版前的设计变更：必须同时改 `renderPolicySql()` 显式渲染 `to`/`as`、同步本节 SQL 块与真源的期望集，并由 `pnpm test` 里的「to/as 不变量」用例把关——只改期望会让工件的隐含语义和断言各走各的，而这个矛盾只有连上真实库才暴露。
 
 **策略缺失/不匹配的两种典型故障（都要在验收里覆盖）**
 
@@ -622,7 +624,7 @@ export default defineEventHandler(async (event) => {
 - [x] `promotion_select_active`（公开读已上架）
 - [x] `promotion_select_admin`（管理员读全部）
 - [x] `promotion_write_admin`（管理员写）
-- [ ] **执行前置**：用只读连接（`MCP_TEST_DATABASE_URL`）核对现有策略与上述三条是否重复/冲突（策略是 OR 叠加的，冗余策略不会报错但会掩盖缺失；工件从不删除未登记策略，重放"成功"后 RLS 仍可能是放宽态）；`verify-mcp.mjs` 会把未登记的额外策略判成漂移并列名
+- [ ] **执行前置**：用只读连接（`MCP_TEST_DATABASE_URL`）核对现有策略与上述三条是否重复/冲突（策略是叠加的，冗余策略不会报错但会掩盖缺失；工件从不删除未登记策略，重放"成功"后 RLS 仍可能是未登记策略与三条叠加的放宽或收窄态）；`verify-mcp.mjs` 会把未登记的额外策略判成漂移，并列出该行的 `cmd`/`permissive`/`roles`/`qual` 原文与叠加方向
 - [ ] 用同一只读连接确认目标库现状，再决定是否需要执行工件——手工执行过且与工件同形的库不必重放
 - [ ] 把实际策略快照回填本文件 §3.5
 
@@ -660,5 +662,5 @@ export default defineEventHandler(async (event) => {
 | A10 | `GET`/`DELETE /api/v1/mcp` → 405 且带 `Allow: POST` |
 | A11 | **R2 硬门禁**：真实 OAuth 流程拿到的 token 能把 admin 判定为 admin（非 admin 用户判定为非 admin）；且该 token 的 `app_metadata` 在 RLS 侧同样生效（写入成功即证明） |
 | A12 | MCP 响应体是 JSON-RPC（`jsonrpc`/`id`/`result`），**不是** `{code,data,message}` 信封（R7） |
-| A13 | **RLS 已启用**：`select relrowsecurity from pg_class where relname = 'promotion'` 为 `t`，且 `pg_policies` 中存在 §3.5 的三条策略——核验查询与断言同源（`scripts/rls-policy-spec.mjs` → `verify-mcp.mjs` 的 `evaluateRlsState()`）。逐条比对策略名、`cmd`、`roles`（工件不带 `to`，隐含 `to public`）、`permissive`（工件不带 `as`，隐含 `as permissive`），并把 `using`/`with check` 规范化后（去空白、去 `::text`、去 `promotion.` 限定符、只剥分组括号、保留 `jwt()` 调用括号）与工件**整串相等**比对；恒真判据、`user_metadata`/`raw_user_meta_data` 判据、缺 `with check`、未登记的额外策略都判失败。等价但写法不同的手工表达式（如 `using (is_active)`、`<> 'notadmin'`、`IN ('admin', …)`、`判据 OR (true)`）会被判失败并列原始 `qual`/`with_check`/`roles`/`permissive` 全文、标记"未识别形状，需人工复核"——门禁的错向是"把正确库报成不合规"，不是"把写宽库放成绿灯" |
+| A13 | **RLS 已启用**：`select relrowsecurity from pg_class where relname = 'promotion'` 为 `t`，且 `pg_policies` 中存在 §3.5 的三条策略——核验查询与断言同源（`scripts/rls-policy-spec.mjs` → `verify-mcp.mjs` 的 `evaluateRlsState()`）。逐条比对策略名、`cmd`、`roles`（工件不带 `to`，隐含 `to public`，`pg_policies.roles` 渲染为 `{public}`）、`permissive`（工件不带 `as`，隐含 `as permissive`），并把 `using`/`with check` 规范化后（去空白、去 `::text`、去 `promotion.` 限定符、只剥分组括号、保留 `jwt()` 调用括号）与工件**整串相等**比对；恒真判据、`user_metadata`/`raw_user_meta_data` 判据、缺 `with check`、只读策略多带 `with check`、`qual` 为空、未登记的额外策略都判失败。`roles` 分三种不符：缺少工件要求的角色是真实**收窄**（这些角色命中不到该策略，`roles` 空数组即此种）；多出的角色在工件已授 `public`（角色全集）时是**等价冗余**，判失败并标记"未识别形状·等价冗余·需人工复核"；工件没授 `public` 时多出的角色才是授权面扩大。未登记策略的报错附该行 `cmd`/`permissive`/`roles`/`qual` 原文，叠加方向由 `permissive` 算出（permissive＝放宽、restrictive＝收窄、两者并存＝两个方向同时存在）。等价但写法不同的手工表达式（如 `using (is_active)`、`<> 'notadmin'`、`IN ('admin', …)`、`判据 OR (true)`）会被判失败并列原始 `qual`/`with_check`/`roles`/`permissive` 全文、标记"未识别形状，需人工复核"——门禁的错向是"把正确库报成不合规"，不是"把写宽库放成绿灯" |
 | A14 | **非 admin 写隔离**：用非 admin 的真实 OAuth token 直连 PostgREST 尝试 insert/update → 被 RLS 拒绝（DB 层闸门也生效，不只是应用层 403） |
