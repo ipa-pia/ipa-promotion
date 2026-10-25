@@ -43,7 +43,7 @@ Vercel Preview 环境变量列表可见 `NUXT_PUBLIC_AUTH_PROVIDER`、`NUXT_PUBL
 | `NUXT_PUBLIC_AUTH_PROVIDER=supabase pnpm exec nuxt prepare && NUXT_PUBLIC_AUTH_PROVIDER=supabase pnpm typecheck` | 通过 |
 | `NUXT_PUBLIC_AUTH_PROVIDER=supabase NUXT_PUBLIC_SUPABASE_URL=https://dummy-project.supabase.co NUXT_PUBLIC_SUPABASE_ANON_KEY=dummy pnpm build` | 通过；仅用于本地 build/路由产物验证，不是目标项目联调；Nuxt Image `nuxt/server` unresolved warning 仍出现 |
 | `pnpm lint` | 通过，0 error；有 2 条既有 warning（`app/error.vue`、`server/api/auth/[...all].ts`） |
-| `pnpm test` | 通过，3 个测试文件、8 项测试 |
+| `pnpm test` | 通过，3 个测试文件、14 项测试（含 PR #8 guard 回归） |
 | `node --check scripts/verify-mcp.mjs` | 通过 |
 | `pnpm test:mcp` | 按设计以 exit 1 退出，清楚列出缺失的 6 项真实环境配置；未启动服务、未写测试数据，因此不是端到端通过 |
 
@@ -52,6 +52,10 @@ Vercel Preview 环境变量列表可见 `NUXT_PUBLIC_AUTH_PROVIDER`、`NUXT_PUBL
 ## 脚本覆盖范围
 
 配置齐备后，`pnpm test:mcp` 会验证 RFC 9728 metadata、模板同意页、无 token/坏 token 的 401 与 `WWW-Authenticate`、GET/DELETE 405、六工具列表与逐字段 schema、管理员读写、普通用户读与四种写拒绝、下架记录可见性、HTTP `GET /api/promotion` 的领域对象对照、入参上限、RLS 开关与策略名称，以及普通用户直连 PostgREST 的 insert/update 拒绝。RLS insert 必须返回 PostgreSQL 错误码 `42501`，并由管理员连接确认唯一标记没有写入；探针和主 fixture 在退出时删除并复查。脚本不会输出 token、Cookie 或数据库连接串。
+
+## PR #8 审查回归
+
+验收 guard 的回归覆盖管理员核验查询错误、非 RLS UPDATE 错误、RLS 允许的零行 UPDATE（并通过管理员记录核验确认未变）、意外记录清理零行但记录仍残留，以及工具字段新增 `pattern` 等未声明约束。以上 guard 共用验收脚本的检查计数器；`scripts/verify-mcp-guard-flow.mjs` 用模拟故障验证累计失败会让进程以 exit 1 退出。该模拟仅验证失败处理路径，不替代真实 Supabase OAuth/RLS 端到端验收。
 
 ## 尚未验证的上线门禁
 
