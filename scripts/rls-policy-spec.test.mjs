@@ -135,10 +135,15 @@ function expectPolicyClauses(sql) {
   }
 }
 
-// 子句段（可选、顺序无关）。三条子句都可以省略，省略即 Postgres 缺省。
+// 子句段：顺序无关、可以重复，但**至少写出一条**。`SHAPE_CLAUSES` 是 `(?: …)+`，跟在它后面的 `?`
+// 只把量词变成惰性（reluctant），不改变"≥1 条"——别按"三条子句都可以省略"的旧注释把它放宽成 `*`：
+// 全省略时 Postgres 建成 `FOR ALL TO PUBLIC AS PERMISSIVE`（两条只读策略当场变成可写），那必须是上限先红。
+// 省略 `FOR` 的缺省判定不依赖这个量化符：Postgres 的缺省是 **FOR ALL**，结构断言按它写死（复验第 2 节 R4）。
 const SHAPE_AS = "as (?:permissive|restrictive)"
 const SHAPE_FOR = "for (?:all|delete|insert|select|update)"
-const SHAPE_TO = "to [\x22a-z0-9_ ]+(?:, *[\x22a-z0-9_ ]+)*"
+// 角色名字符类含 `"`、`.`、`-`：`to "promotion-writer"` 这类带连字符或点的引号角色名是合法写法，
+// 不该在分授落地当天先撞上限（复验第 3 节末尾）。`-` 停在字符类末尾，避免被当成区间端点。
+const SHAPE_TO = "to [\x22a-z0-9_. -]+(?:, *[\x22a-z0-9_. -]+)*"
 const SHAPE_CLAUSE = `(?:${SHAPE_AS}|${SHAPE_FOR}|${SHAPE_TO})`
 const SHAPE_CLAUSES = `(?: ${SHAPE_CLAUSE})+`
 
@@ -150,6 +155,12 @@ function escapePattern(text) {
 // RLS 工件的绝对上限若由被约束的渲染器提供，就退化成自比对本体（复验第 3 节 T11/T15/T16 实测：
 // 渲染器被加上 `delete from` / `disable row level security` / 换拼法的 `revoke usage` 后，#16 那批 89 项仍全绿）。
 // 子句段按 SHAPE_CLAUSES 匹配，所以分授落地时写出正宗 `as permissive for select to …` 不会撞这条上限。
+//
+// 下面 `predicates` 里那三条 `using` / `with check` 判据文本，是这个文件相对真源的**第二份**副本，
+// 而且是**刻意保留的第二份**：它拦的是「spec + 渲染器 + §3.5 三处同改」的协调编辑——复验实测把公开读
+// 判据放宽成 `is_active = true OR 1 = 1` 并同步三处，集合相等按构造看不见差异，只有这份字面量会红。
+// **不要当成冗余去重，也不要改成从 `RLS_POLICIES` 派生**（派生即退回 #16 的自比对本体）。
+// 代价是改一次合法判据要同步两处，失败消息会原样打印被改的整条语句，定位不成问题。
 function allowedStatementPatterns() {
   const predicates = {
     promotion_select_active: ["is_active = true", null],
@@ -208,8 +219,10 @@ function expectRlsSqlStructure(sql) {
     const statement = createPolicyStatement(sql, policy.name)
     expect(statement, `缺少 create policy ${policy.name}`).not.toBeNull()
     const normalized = statement.replace(/;$/, "").replace(/\s+/g, " ").trim().toLowerCase()
-    const command = normalized.match(/\bfor (all|delete|insert|select|update)\b/)?.[1] ?? "select"
-    expect(command, `${policy.name} 的 for 子句是 ${command}，真源要求 ${policy.command.toLowerCase()}（省略时 Postgres 缺省为 for select）`).toBe(policy.command.toLowerCase())
+    // Postgres 的 `CREATE POLICY` 省略 `FOR` 时缺省是 **FOR ALL**（官方文档：`ALL is the default.`），
+    // 不是 SELECT。把缺省写成 select 会让"只读策略没写 FOR"这条写宽形状静默通过判定。
+    const command = normalized.match(/\bfor\s+(all|delete|insert|select|update)\b/)?.[1] ?? "all"
+    expect(command, `${policy.name} 的 for 子句是 ${command}，真源要求 ${policy.command.toLowerCase()}（省略 FOR 时 Postgres 的缺省是 FOR ALL，不是 SELECT）`).toBe(policy.command.toLowerCase())
     expect(normalized, `${policy.name} 的 using 判据与真源不同形`).toContain(`using (${policy.using.toLowerCase()})`)
     if (policy.withCheck) expect(normalized, `${policy.name} 的 with check 判据与真源不同形`).toContain(`with check (${policy.withCheck.toLowerCase()})`)
     else expect(normalized, `${policy.name} 是只读策略却带 with check，真源没有登记这一项`).not.toContain("with check")
@@ -249,11 +262,22 @@ function inlineClause(sql, clause) {
 
 // 正宗 Postgres 子句顺序：`on <table> as permissive for <cmd> to <roles> using (…)`。
 // 这是按角色分授真要落地时渲染器会写出的形状，用来证明结构断言与形状上限都不依赖子句顺序。
+// 锚点按 `\s+` 与 `i` 匹配：门禁两侧都先把语句归一成小写单行，夹具若写死"小写 + 单个空格 + 换行"，
+// 同义拼法就会让**夹具**先红（复验第 2 节末的噪声项），把"构造红"和"判定红"混在一起。
+const CANONICAL_ANCHOR = /create\s+policy\s+"(promotion_[a-z_]+)"\s+on\s+(public\.promotion)\s+for\s+(select|all)/gi
 function withCanonicalClauseOrder(sql) {
-  return sql.replace(
-    /create policy "(promotion_[a-z_]+)"\n(\s+)on (public\.promotion) for (select|all)/g,
-    (_match, name, indent, table, command) => `create policy "${name}"\n${indent}on ${table} as permissive for ${command} to public`,
-  )
+  return sql.replace(CANONICAL_ANCHOR, (_match, name, table, command) => `create policy "${name}" on ${table} as permissive for ${command} to public`)
+}
+
+// 把某条策略的 `FOR` 子句换成别的写法（同义子句、或干脆删掉）。大小写与换行都算同一种写法。
+function replaceCommand(sql, name, replacement) {
+  const statement = createPolicyStatement(sql, name)
+  return sql.split(statement).join(statement.replace(/\bfor\s+(?:select|all)\b/i, replacement))
+}
+
+// 把三条 `create policy` 的 `FOR` 子句统一换成同一种写法。
+function replaceForClause(sql, replacement) {
+  return RLS_POLICIES.reduce((text, policy) => replaceCommand(text, policy.name, replacement), sql)
 }
 
 // 期望没动、工件或 §3.5 的授权子句先变了——复验实测的三个漏（V6/V7/V8）加一个只写 as 的变体。
@@ -439,10 +463,8 @@ describe("promotion RLS 工件与真源一致", () => {
   // R1：`to authenticated` 但整条没写 `FOR` 时，解析窗口退化成空串——以前补成 public 恰好等于期望，
   // 子句断言是绿的（复验 T1）。现在必须报未识别，"省略"与"没认出来"在数据上可分。
   it("R1：有 to 却没解析出角色集时判未识别，不补 Postgres 缺省", () => {
-    const noFor = RLS_POLICIES.reduce((text, policy) => {
-      const statement = createPolicyStatement(text, policy.name)
-      return text.split(statement).join(statement.replace(/\bfor (select|all)\b/i, "to authenticated"))
-    }, renderMigrationSql())
+    const noFor = replaceForClause(renderMigrationSql(), "to authenticated")
+    expect(noFor, "夹具必须真的把 FOR 换掉，否则这条用例空转").not.toBe(renderMigrationSql())
     const statement = createPolicyStatement(noFor, "promotion_select_active")
     const clauses = parseClauses(statement)
     expect(clauses.roles, "没有 FOR 时解析窗口为空，不该假装解析出了角色集").toBeNull()
@@ -451,6 +473,12 @@ describe("promotion RLS 工件与真源一致", () => {
     expect(() => expectPolicyClauses(noFor)).toThrow(/未识别形状，需人工复核/)
     // 反向：真省略（连 to 都没有）时不是未识别。
     expect(parseClauses(createPolicyStatement(renderMigrationSql(), "promotion_select_active")).unrecognized).toBe(false)
+    // 夹具的正则大小写/换行无关：同义拼法下"缺 FOR"仍是同一条形状（复验第 2 节末的噪声项）。
+    const respelled = renderMigrationSql().replace("on public.promotion for select", "on public.promotion FOR\n  select")
+    expect(respelled, "夹具必须真的改写出同义拼法").not.toBe(renderMigrationSql())
+    const noForRespelled = replaceForClause(respelled, "to authenticated")
+    expect(noForRespelled, "同义拼法不该让夹具漏改写").not.toBe(respelled)
+    expect(parseClauses(createPolicyStatement(noForRespelled, "promotion_select_active")).unrecognized, "同义拼法下仍判未识别").toBe(true)
   })
 
   // R1 顺带封掉的另一个面：策略名里含字面量 `using (` 会把搜索窗口截断在真正的子句之前（复验 T2）。
@@ -483,7 +511,51 @@ describe("promotion RLS 工件与真源一致", () => {
     expect(unexpectedStatements(canonical), "正宗子句顺序不该撞形状上限").toEqual([])
     expect(() => expectRlsSqlStructure(canonical)).not.toThrow()
     expect(() => expectRlsSqlStructure(block)).not.toThrow()
+    // 夹具的锚点大小写/换行无关：同义拼法下正宗顺序仍被改写、判定仍为绿（复验第 2 节末的噪声项）。
+    const respelled = withCanonicalClauseOrder(renderMigrationSql().replace("on public.promotion for select", "on public.promotion FOR\n  select"))
+    expect(respelled, "大写 + 换行的同义拼法不该让夹具漏改写").toContain("as permissive for select to public")
+    expect(unexpectedStatements(respelled), "大写 + 换行的同义拼法不该撞形状上限").toEqual([])
+    expect(() => expectRlsSqlStructure(respelled)).not.toThrow()
   })
+
+  // 缺省值本身要写对：Postgres 省略 FOR 的缺省是 FOR ALL（官方文档 "ALL is the default."），
+  // 只读策略不写 FOR 等于当场开出写面。上限只要求"至少一条子句"，所以
+  // `as permissive to public using (…)` 这种"写了子句却没写 FOR"的形状**进得来上限**——
+  // 拦它的必须是结构断言本体，不是量化符的意外（复验第 2 节：安全性从"靠一个与自身注释矛盾的量化符"变成"靠判定"）。
+  it("R4 缺省：读策略缺 FOR 由结构断言报 all（上限放得进），写策略缺 FOR 是同义写法", () => {
+    // 循环在第一条不一致就抛，所以两条读策略分开构造、分开断言。
+    for (const name of ["promotion_select_active", "promotion_select_admin"]) {
+      const widened = replaceCommand(renderMigrationSql(), name, "as permissive")
+      expect(unexpectedStatements(widened), `${name} 写了 as 却没写 FOR 的形状必须由上限放行，红才能来自判定而不是量化符`).toEqual([])
+      expect(() => expectRlsSqlStructure(widened), name).toThrow(new RegExp(`${name} 的 for 子句是 all，真源要求 select`))
+    }
+    // `to` 写在 `for` 的位置上又缺 FOR 时，解析窗口取不到角色集，R1 那一层同样标未识别——两层都红，方向一致。
+    const withTo = replaceCommand(renderMigrationSql(), "promotion_select_active", "as permissive to public")
+    expect(() => expectPolicyClauses(withTo)).toThrow(/未识别形状，需人工复核/)
+    // 写策略真源要求 ALL：省略 FOR 与显式 FOR ALL 同义。缺省写成 select 时这条会**误红**（错真），
+    // 缺省写成 all 才是判定本身放过同义写法。
+    const sameSpelling = replaceCommand(renderMigrationSql(), "promotion_write_admin", "as permissive")
+    expect(() => expectRlsSqlStructure(sameSpelling)).not.toThrow()
+    expect(() => expectRlsSqlShapes(sameSpelling)).toThrow(/夹带了工件之外的语句/)
+  })
+
+  // 与上一条配对：三条子句全省略（`on public.promotion using (…)`）今天由上限先红；
+  // 但若有人按旧注释把量化符放宽成可选，结构断言必须独自拦住——安全性不依赖那一个量化符。
+  it("R4 缺省：三条子句全省略时上限与结构断言各自都拦得住", () => {
+    const omitted = RLS_POLICIES.reduce((text, policy) => replaceCommand(text, policy.name, ""), renderMigrationSql())
+    expect(omitted, "夹具必须真的删掉 FOR，否则这条用例空转").not.toBe(renderMigrationSql())
+    expect(() => expectRlsSqlShapes(omitted)).toThrow(/上限之外的语句/)
+    expect(() => expectRlsSqlStructure(omitted)).toThrow(/for 子句是 all，真源要求 select/)
+  })
+
+  // 分授期摩擦（复验第 3 节末尾）：带连字符或点的引号角色名是合法写法，不该在分授落地当天先撞上限。
+  for (const role of ["promotion-writer", "promotion.writer"]) {
+    it(`上限的角色字符类含 - 与 .：to "${role}" 的红来自子句判定，不来自上限`, () => {
+      const granted = withClause(renderMigrationSql(), `to "${role}"`)
+      expect(unexpectedStatements(granted), `带 - / . 的角色名不该先撞上限`).toEqual([])
+      expect(() => expectPolicyClauses(granted)).toThrow(new RegExp(role.replace(/\./g, "\\.")))
+    })
+  }
 
   for (const mutation of CLAUSE_MUTATIONS) {
     it(`${mutation.id}：${mutation.description} 必须红`, () => {
