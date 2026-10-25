@@ -1,6 +1,7 @@
 {
   "name": "nuxt-tmpl",
   "type": "module",
+  "packageManager": "pnpm@10.34.8",
   "private": true,
   "engines": {
     "node": ">=21.0.0"
