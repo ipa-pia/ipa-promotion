@@ -4,6 +4,7 @@ import { existsSync } from "node:fs"
 import { once } from "node:events"
 import { resolve } from "node:path"
 import { createServer } from "node:net"
+import { compareMcpToolSchemas, confirmRecordDeleted, isRlsInsertRejected } from "./verify-mcp-helpers.mjs"
 
 const root = process.cwd()
 const missing = []
@@ -41,6 +42,9 @@ if (!existsSync(resolve(root, "node_modules/dotenv/config.js")) || !existsSync(r
 }
 
 // dotenv does not fail on a missing .env; the checks below can then give a useful message.
+if (!existsSync(resolve(root, ".env"))) {
+  console.error("MCP 验收提示：未找到 .env 文件；请复制 .env.example 为 .env 并补齐验收环境变量。")
+}
 await import("dotenv/config")
 
 const requiredVariables = [
@@ -214,6 +218,7 @@ let adminDb
 let userDb
 let fixtureId
 const rogueIds = []
+const rogueNames = []
 let fixtureName
 try {
   await verifyRlsPolicies()
@@ -279,7 +284,8 @@ try {
   await withMcpClient(endpoint, adminToken, async (client) => {
     const listedTools = await client.listTools()
     const expectedTools = ["list_promotions", "get_promotion", "create_promotion", "update_promotion", "delete_promotion", "set_promotion_active"]
-    requireCheck("MCP initialize/tools/list 返回定稿的六个工具", expectedTools.every(name => listedTools.tools.some(tool => tool.name === name)) && listedTools.tools.length === expectedTools.length)
+    const schemaErrors = compareMcpToolSchemas(listedTools.tools)
+    requireCheck("MCP initialize/tools/list 返回六个定稿工具及字段 schema", schemaErrors.length === 0, schemaErrors.join("; "))
 
     const marker = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     fixtureName = `MCP验收-${marker}`
@@ -323,11 +329,19 @@ try {
       const unexpectedWrite = await adminDb.from("promotion").select("id").eq("name", `${fixtureName}-denied`)
       rogueIds.push(...(unexpectedWrite.data ?? []).map(row => String(row.id)))
 
+      const rlsProbeName = `${fixtureName}-rls-denied`
+      rogueNames.push(rlsProbeName)
       const directInsert = await userDb.from("promotion").insert({
-        name: `${fixtureName}-rls-denied`, url: "https://example.com/rls-denied", category: "other", description: "RLS 拒绝探针", is_active: false,
-      }).select("id").maybeSingle()
-      requireCheck("普通用户直连 PostgREST insert 被 RLS 拒绝", Boolean(directInsert.error) || !directInsert.data)
-      if (directInsert.data?.id) rogueIds.push(String(directInsert.data.id))
+        name: rlsProbeName, url: "https://example.com/rls-denied", category: "other", description: "RLS 拒绝探针", is_active: false,
+      })
+      const insertedProbe = await adminDb.from("promotion").select("id").eq("name", rlsProbeName)
+      if (insertedProbe.error) {
+        requireCheck("普通用户 RLS insert 探针可由管理员核验", false, "管理员连接查询探针记录失败")
+      }
+      else {
+        rogueIds.push(...(insertedProbe.data ?? []).map(row => String(row.id)))
+        requireCheck("普通用户直连 PostgREST insert 被 RLS 拒绝", isRlsInsertRejected(directInsert.error, insertedProbe.data ?? []), directInsert.error?.code ?? "insert 未返回 RLS 错误 42501")
+      }
       const directUpdate = await userDb.from("promotion").update({ name: `${fixtureName}-rls-tampered` }).eq("id", fixtureId).select("id").maybeSingle()
       requireCheck("普通用户直连 PostgREST update 未修改记录", Boolean(directUpdate.error) || !directUpdate.data)
     })
@@ -366,12 +380,24 @@ catch (error) {
 }
 finally {
   if (fixtureId && adminDb) {
-    const cleanup = await adminDb.from("promotion").delete().eq("id", fixtureId)
-    check("清理 MCP 临时验收记录", !cleanup.error, cleanup.error ? "Supabase 未接受管理员删除；请手动清理已下架的临时记录" : "")
+    const cleanup = await confirmRecordDeleted({
+      deleteRecord: async () => ({
+        ...(await adminDb.from("promotion").delete().eq("id", fixtureId).select("id").maybeSingle()),
+        expectedId: fixtureId,
+      }),
+      findRecord: async () => adminDb.from("promotion").select("id").eq("id", fixtureId).maybeSingle(),
+    })
+    check("清理 MCP 临时验收记录并确认已删除", cleanup.ok, cleanup.reason ?? "")
   }
   for (const rogueId of rogueIds) {
     const cleanup = await adminDb.from("promotion").delete().eq("id", rogueId)
     check("清理权限拒绝探针意外写入的数据", !cleanup.error)
+  }
+  for (const rogueName of rogueNames) {
+    const cleanup = await adminDb.from("promotion").delete().eq("name", rogueName).select("id")
+    const remaining = await adminDb.from("promotion").select("id").eq("name", rogueName)
+    check("清理并复查 RLS insert 探针记录", !cleanup.error && !remaining.error && (remaining.data ?? []).length === 0,
+      cleanup.error?.message ?? remaining.error?.message ?? "记录仍存在")
   }
   if (child && child.exitCode === null) {
     child.kill("SIGTERM")

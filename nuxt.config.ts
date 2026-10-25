@@ -119,7 +119,7 @@ export default defineNuxtConfig({
       guestRoutes: ["/dashboard"],
       // MCP 使用 Bearer Token 自行鉴权，因此只豁免 MCP 路径，避免同级 API 跳过全局鉴权。
       // 模板按「路径段前缀」匹配（/a 覆盖 /a/x/y，/ 只匹配根）。
-      publicRoutes: ["/api/v1/mcp", "/.well-known", "/oauth"],
+      publicRoutes: ["/api/v1/mcp"],
     },
     mcp: {
       // 模板默认 mcp.enabled: false，必须显式打开，否则发现元数据不会注册（静默 404）。
