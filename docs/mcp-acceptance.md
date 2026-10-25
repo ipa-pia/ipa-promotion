@@ -4,7 +4,23 @@
 
 本记录对应 LEOK-19 的验收脚本、README 文档和对 PR #4 的独立检查。实现基线为 PR #4 head `1911110a44fd7df5bff740f5e8f058ecc158325c`（`agent/codex/a73de21b26f1`），新验收分支从该 head 创建，PR 目标为 `feat/mcp`。
 
-**当前结论：脚本和文档已交付；完整端到端验收尚未通过。** 当前环境没有 `.env`、目标 Supabase 凭据、真实 OAuth 管理员/普通用户 token、管理员浏览器会话 Cookie 或数据库只读连接。不能据此声称 `pnpm test:mcp` 或生产上线门禁通过。
+**当前结论：最终 Preview 的模板路由与 MCP HTTP 边界已独立通过；真实 OAuth/RLS 端到端验收尚未通过。** 本地环境没有 `.env` 或 MCP 测试变量；Vercel Preview 已配置 Supabase provider、URL 和 anon key，但还没有真实 OAuth 管理员/普通用户 token、管理员浏览器会话 Cookie 或数据库只读连接。不能据此声称 `pnpm test:mcp` 或生产上线门禁通过。
+
+## 最终 Preview 独立复核（2026-10-25）
+
+基线为 `feat/mcp` SHA `38589a74686f626d1c4cd66061f6aafd065ef3d2`。经已登录 Vercel CLI（scope `xdewxs`）检查，部署 `dpl_8f2CVtA1QKMttY2UBhASKhmiT4T2` 为 `Ready`，Preview 地址为 `https://ipa-promotion-acye40lw0-xdewxs.vercel.app`，并关联 `ipa-promotion-git-feat-mcp-xdewxs.vercel.app`。Vercel 构建路由清单包含 `.well-known/oauth-protected-resource/[...]` 与 `oauth/consent`；最终 `feat/mcp` 源码中没有项目自建的 `app/pages/oauth/consent.vue`。
+
+未登录的普通 `curl` 请求被 Vercel 平台保护重定向到 `vercel.com/sso-api`（HTTP 302，`server: Vercel`、`x-vercel-id`）。这是部署保护响应，不能当作应用路由结果。使用 `vercel curl --deployment dpl_8f2CVtA1QKMttY2UBhASKhmiT4T2 --scope xdewxs` 自动通过平台保护后，独立观测到以下应用响应：
+
+| 请求 | 应用结果 | 判定 |
+|---|---|---|
+| `GET /.well-known/oauth-protected-resource/api/v1/mcp` | 200 `application/json`；`resource` 指向当前 Preview 的 `/api/v1/mcp`；`authorization_servers[0]` 指向目标 Supabase `/auth/v1`；RFC 9728 其余字段存在 | 通过 |
+| `GET /oauth/consent` | 200 `text/html`，无重定向；Vercel 构建路由列出该模板页面，源码无项目同名页 | 通过 |
+| `POST /api/v1/mcp`（无 Authorization） | 401 JSON，含 `WWW-Authenticate: Bearer` 和带端点后缀的 `resource_metadata` URL | 通过 |
+| `GET /api/v1/mcp` | 405，`Allow: POST` | 通过 |
+| `DELETE /api/v1/mcp` | 405，`Allow: POST` | 通过 |
+
+Vercel Preview 环境变量列表可见 `NUXT_PUBLIC_AUTH_PROVIDER`、`NUXT_PUBLIC_SUPABASE_URL`、`NUXT_PUBLIC_SUPABASE_ANON_KEY` 和 `BETTER_AUTH_SECRET`；这里只核对变量是否存在，没有读取或记录其值。未看到 MCP 测试 OAuth token、管理员 Cookie 或数据库连接配置。
 
 ## 独立实现检查
 
@@ -30,7 +46,7 @@
 | `node --check scripts/verify-mcp.mjs` | 通过 |
 | `pnpm test:mcp` | 按设计以 exit 1 退出，清楚列出缺失的 6 项真实环境配置；未启动服务、未写测试数据，因此不是端到端通过 |
 
-第一次裸跑 `pnpm typecheck` 时没有设置构建期 `NUXT_PUBLIC_AUTH_PROVIDER`，Nuxt 未生成 `useSupabaseClient` 自动导入并报错；设置 `supabase` 后重新生成类型并复跑通过。当前也没有目标 Supabase / OAuth / RLS 数据库条件，无法完成后续真实端到端验收。
+第一次裸跑 `pnpm typecheck` 时没有设置构建期 `NUXT_PUBLIC_AUTH_PROVIDER`，Nuxt 未生成 `useSupabaseClient` 自动导入并报错；设置 `supabase` 后重新生成类型并复跑通过。本地仍没有目标 OAuth token、管理员 Cookie 或 RLS 数据库连接，无法完成后续真实端到端验收。
 
 ## 脚本覆盖范围
 
@@ -43,6 +59,7 @@
 - [ ] 管理员浏览器会话 Cookie 可访问 `GET /api/promotion`，用于与 MCP 读对象进行结构和值对照。
 - [ ] 目标 `promotion` 表已启用 RLS，并存在 `promotion_select_active`、`promotion_select_admin`、`promotion_write_admin` 策略；用只读数据库连接核实策略条件。
 - [ ] 在真实目标库完成管理员新增、修改、软下架、普通用户隔离及 RLS 直连拒绝测试，并确认临时记录清理成功。
-- [ ] 部署预览检查通过；此前 PR #2 和 PR #4 的 Vercel 检查均报告 failed，需查明部署日志原因并复核。
+- [x] 最终 Preview 的发现元数据、模板 consent 页面、无 token 401 challenge、GET/DELETE 405 已通过 Vercel 授权绕过独立验证；平台 SSO 302 已与应用响应区分。
+- [ ] 真实 `pnpm test:mcp` 在目标 Supabase 上完整通过，并确认新增测试数据清理成功。
 
 缺少任一脚本必需配置时，脚本会在启动服务或写入测试数据之前退出。mock token、模拟数据库、只完成 build/lint/typecheck，均不能代替以上真实联调证据。
