@@ -7,6 +7,23 @@ export default defineNuxtConfig({
   devtools: { enabled: true },
   ssr: false,
 
+  hooks: {
+    // @nuxt-tmpl/nuxt currently marks @ipa-vue/core external for all builds.
+    // That leaves an unresolvable bare import in browser chunks, so bundle it
+    // into the client while preserving the server's external configuration.
+    "vite:extendConfig"(config, { isClient }) {
+      if (!isClient) return;
+
+      const rollupOptions = config.build?.rollupOptions;
+      const external = rollupOptions?.external;
+      if (rollupOptions && Array.isArray(external)) {
+        rollupOptions.external = external.filter(
+          (entry) => entry !== "@ipa-vue/core",
+        );
+      }
+    },
+  },
+
   ...(process.env.NUXT_PUBLIC_AUTH_PROVIDER === "clerk"
       ? {
           clerk: {
