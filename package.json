@@ -11,6 +11,7 @@
     "generate": "nuxt generate",
     "preview": "nuxt preview",
     "postinstall": "nuxt prepare",
+    "test:mcp": "node scripts/verify-mcp.mjs",
     "test": "vitest run",
     "lint": "eslint",
     "lint:fix": "eslint --fix",
