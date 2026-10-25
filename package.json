@@ -17,6 +17,7 @@
     "lint": "eslint",
     "lint:fix": "eslint --fix",
     "typecheck": "vue-tsc --build --force tsconfig.json",
+    "typecheck:supabase": "node scripts/typecheck-with-provider.mjs supabase",
     "prepare": "husky",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",

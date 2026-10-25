@@ -115,9 +115,12 @@ curl -i https://<host>/.well-known/oauth-protected-resource
 pnpm install --frozen-lockfile
 cp .env.example .env
 # 在 .env 中配置 Supabase URL/anon key，以及下方验收所需的真实 OAuth 凭据和只读数据库连接。
+pnpm typecheck:supabase
 NUXT_PUBLIC_AUTH_PROVIDER=supabase pnpm build
 pnpm test:mcp
 ```
+
+`pnpm typecheck:supabase` 会以 `NUXT_PUBLIC_AUTH_PROVIDER=supabase` 先重跑 `nuxt prepare` 再做类型检查。裸跑 `pnpm typecheck` 在这个 provider 下必然报 `failed to find "useSupabaseClient" imported from "#imports"`——那是构建期常量缺失，不是代码回归。
 
 `pnpm test:mcp` 只连接本地编译产物，不会自动获取 OAuth token、创建 Supabase 项目或替代数据库。它会真实调用 Auth、PostgREST 和 MCP 端点，并创建后清理一条带随机标记的验收记录。完整运行需要在 `.env` 提供：
 
