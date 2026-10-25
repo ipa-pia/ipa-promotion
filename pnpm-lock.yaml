@@ -15,7 +15,7 @@ overrides:
 
 patchedDependencies:
   '@nuxt-tmpl/nuxt@0.2.10':
-    hash: 8b0f80116913f8e19bd7a20b2b3d9597603f97574537f060b490c4e76dd55775
+    hash: 1a40b23f2e90b5834541f92b039bfe1db14c1ffd5b4fbcb9ad339330eabce82c
     path: patches/@nuxt-tmpl__nuxt@0.2.10.patch
 
 importers:

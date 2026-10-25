@@ -1,6 +1,7 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
 import IconsResolver from 'unplugin-icons/resolver'
 import ViteComponents from 'unplugin-vue-components/vite'
+import { authGuestRoutes, authPublicRoutes } from './shared/utils/auth-routes'
 
 export default defineNuxtConfig({
   compatibilityDate: "2025-07-15",
@@ -133,10 +134,11 @@ export default defineNuxtConfig({
     auth: {
       enabled: true,
       afterSignInRoute: "/dashboard",
-      guestRoutes: ["/dashboard"],
-      // MCP 使用 Bearer Token 自行鉴权，因此只豁免 MCP 路径，避免同级 API 跳过全局鉴权。
+      guestRoutes: authGuestRoutes,
+      // MCP 使用 Bearer Token 自行鉴权，因此只豁免该端点，避免同级 API 跳过全局鉴权。
       // 模板按「路径段前缀」匹配（/a 覆盖 /a/x/y，/ 只匹配根）。
-      publicRoutes: ["/api/v1/mcp"],
+      // 英文 locale 需要显式映射模板的 consent 默认豁免；使用精确正则避免放行子路径。
+      publicRoutes: authPublicRoutes,
     },
     mcp: {
       // 模板默认 mcp.enabled: false，必须显式打开，否则发现元数据不会注册（静默 404）。
