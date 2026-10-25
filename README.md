@@ -84,7 +84,9 @@ curl -i https://<host>/.well-known/oauth-protected-resource
 
 ### publicRoutes 放行说明
 
-`nuxtTmpl.auth.publicRoutes` 显式包含 `/api/v1`、`/.well-known`、`/oauth`：已发布的 `@ipa-schema/auth@1.0.0` 的 `DEFAULT_PUBLIC_ROUTES` 只有 `/__nuxt_error`（sibling 仓库把 `/.well-known` 加进默认名单的提交未发布），不显式放行则发现请求会被鉴权中间件按未登录 302 到 `/`（`/api/*` 则 401）。模板按**路径段前缀**匹配（`/a` 覆盖 `/a/x/y`，`/` 只匹配根）。
+当前 `nuxtTmpl.auth.publicRoutes` 配置为 `/api/v1/mcp`、`/.well-known` 和 `/oauth`。其中 MCP 只放行 `/api/v1/mcp`，因为该端点会自行验证 Bearer token；不要放行整个 `/api/v1`，否则同级 API 也会跳过模板的全局鉴权。模板按**路径段前缀**匹配（`/a` 覆盖 `/a/x/y`，`/` 只匹配根）。
+
+发现路径无需显式加入 `publicRoutes`：服务端中间件使用已发布的 `@nuxt-tmpl/core@0.2.10` 中 `isSafeRoute`，该函数内置豁免 `/.well-known` 和 `/oauth/consent`。`@ipa-schema/auth` 的 `DEFAULT_PUBLIC_ROUTES` 列表不是这里服务端中间件的匹配依据。
 
 ### MCP 端点与认证
 
