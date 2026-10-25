@@ -84,9 +84,9 @@ curl -i https://<host>/.well-known/oauth-protected-resource
 
 ### publicRoutes 放行说明
 
-当前 `nuxtTmpl.auth.publicRoutes` 只配置 `/api/v1/mcp`。该端点会自行验证 Bearer token；不要放行整个 `/api/v1`，否则同级 API 也会跳过模板的全局鉴权。模板按**路径段前缀**匹配（`/a` 覆盖 `/a/x/y`，`/` 只匹配根）。
+`nuxtTmpl.auth.publicRoutes` 放行 `/api/v1/mcp` 与精确英文同意页别名 `re:^/en/oauth/consent/?$`。MCP 端点会自行验证 Bearer token；不要放行整个 `/api/v1`，否则同级 API 也会跳过模板的全局鉴权。模板按**路径段前缀**匹配普通字符串（`/a` 覆盖 `/a/x/y`）；`re:` 字符串使用正则匹配。
 
-发现路径无需显式加入 `publicRoutes`：已发布的 `@nuxt-tmpl/nuxt@0.2.10` 服务端中间件调用 `@nuxt-tmpl/core@0.2.10` 的 `isSafeRoute`，内置豁免 `/.well-known` 和 `/oauth/consent`；同意页还声明为公开页面。`@ipa-schema/auth@1.0.0` 的客户端 `DEFAULT_PUBLIC_ROUTES` 不包含这两项，但它不是上述服务端中间件的匹配依据。路径豁免依赖 core 的服务端实现，而不是 auth 包的客户端默认列表。
+模板服务端与客户端都按原始 pathname 匹配，未自动剥离 i18n locale 前缀。默认路径 `/.well-known` 与 `/oauth/consent` 使用模板内置豁免；英文 consent 必须显式精确放行。首页、登录、注册和 dashboard 的英文路径在 `guestRoutes` 中复用既有 guest 策略：`re:^/en/?$`、`/en/sign-in`、`/en/sign-up`、`/en/dashboard`。首页必须用锚定正则，不能用普通字符串 `/en`，否则会把 `/en/private` 等路径一并放行。对应配置集中在 `shared/utils/auth-routes.ts`，回归测试同时检查模板服务端 `isSafeRoute` 和客户端 `getAuthMode`。
 
 ### MCP 端点与认证
 

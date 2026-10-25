@@ -17,7 +17,7 @@
 | **D3** | 管理员判定 | **单一真源**：`isAdminUser(user)` ≡ `user?.app_metadata?.role === "admin"`（全仓唯一出现处）。会话 cookie 与 Bearer token 只是"身份获取方式"不同，判定逻辑与 401/403 映射完全共用 |
 | **D4** | 契约层 | **引入** `shared/contracts/promotion.ts`（zod v4）为唯一真源。`parsePromotionForm*` 改为委托该契约，HTTP API 与 MCP 工具入参同源 |
 | **D5** | 端点与传输 | `POST /api/v1/mcp`，Streamable HTTP **无状态**（`sessionIdGenerator: undefined` + `enableJsonResponse: true`），`GET`/`DELETE` 返回 405 |
-| **D6** | 模板复用边界 | **不自建**发现元数据路由、**不自建** `/oauth/consent` 页面、**不自研** OAuth/AS。`/.well-known` 与 `/oauth/consent` **无需**进 `publicRoutes`（core 0.2.10 内置豁免）；MCP 仅放行 `/api/v1/mcp`，不放行整个 `/api/v1` |
+| **D6** | 模板复用边界 | **不自建**发现元数据路由、**不自建** `/oauth/consent` 页面、**不自研** OAuth/AS。默认语言的 `/.well-known` 与 `/oauth/consent` 使用 core 0.2.10 内置豁免；i18n 英文 consent 需精确加入 `publicRoutes`。MCP 仅放行 `/api/v1/mcp`，不放行整个 `/api/v1` |
 | **D7** | 机器凭据 | **不做** App Token / machine credential 体系（本项目只有 Supabase 用户身份，复制 ipa-changelog 的机器写入是另一个产品特性） |
 | **D8** | 数据访问 | 走**调用者 token** 的 Supabase 客户端（模板自带的 `createTokenSupabaseClient`），不经 HTTP 自调用；应用层可见性规则为权威，RLS 为纵深防御 |
 | **D9** | RLS | **约定启用**（产品决策 2026-10-24）。`promotion` 表启用 RLS，策略见 §3.5；应用层判定**不因此放松**，两者是"DB 层 + 应用层"双闸 |
@@ -48,8 +48,8 @@
 
 《mcp-recon.md》与父 issue 的"关键前置事实 3"写的是"**MCP 端点与发现元数据路径都必须加进 `nuxtTmpl.auth.publicRoutes`**"。逐行核对 `@nuxt-tmpl/core@0.2.10` 后，结论需要修正：
 
-1. **`/.well-known` 与 `/oauth/consent` 无需显式放行**。core 的 `isSafeRoute(path, guestRoutes, publicRoutes)` 内部恒定并入内置豁免清单，命中即放行；MCP 端点需单独配置在 `publicRoutes`，且路径前缀应限定为 `/api/v1/mcp`，避免同级 API 跳过全局鉴权。
-   → 阶段 2 的 `nuxt.config.ts` 只把 MCP 前缀加入 `publicRoutes`：`/api/v1/mcp`。
+1. **默认语言的 `/.well-known` 与 `/oauth/consent` 无需显式放行**。core 的 `isSafeRoute(path, guestRoutes, publicRoutes)` 内部恒定并入原始路径的内置豁免清单；它不会去除 i18n locale 前缀。MCP 端点需单独配置在 `publicRoutes`，且路径前缀应限定为 `/api/v1/mcp`，避免同级 API 跳过全局鉴权；英文 consent 需精确别名 `re:^/en/oauth/consent/?$`。
+   → `guestRoutes` 为英文首页、登录、注册和 dashboard 补齐与默认路径等价的别名；英文首页使用锚定正则 `re:^/en/?$`，避免放行 `/en` 下其他路径。
 2. **`nuxtTmpl.mcp.enabled` 的默认值是 `false`**（`module.mjs` 的 `defaults` 里 `mcp: { enabled: false }`，注册条件是 `options.mcp?.enabled !== false`）。
    → 必须显式写 `mcp: { enabled: true }`，否则发现元数据**根本不会出现**。
 3. **core 必须与 nuxt 同版本升级**。豁免清单在 **core** 里；registry 上 `@nuxt-tmpl/core` 现存版本同样只有 `0.2.10`（`0.2.1` 已 404 下架）。
@@ -487,9 +487,9 @@ export default defineEventHandler(async (event) => {
 | Bearer 客户端 | `createTokenSupabaseClient(token)` | MCP 鉴权与数据访问直接调用 |
 | 响应解包 | `skipResponseWrap(event)` | MCP 端点入口调用 |
 | 会话客户端 | `createServerSupabaseClient(event)` | 现有 HTTP 管理接口继续使用，不动 |
-| 路由豁免 | core 的内置 `/.well-known`、`/oauth/consent` 豁免 | **不加进 `publicRoutes`** |
+| 路由豁免 | core 对原始路径内置 `/.well-known`、`/oauth/consent` 豁免 | 默认路径**不加进** `publicRoutes`；英文 consent 需精确别名 `re:^/en/oauth/consent/?$` |
 
-**发布依赖依据**：`@nuxt-tmpl/nuxt@0.2.10` 的服务端鉴权中间件从 `@nuxt-tmpl/core@0.2.10` 调用 `isSafeRoute`；core 内置豁免 `/.well-known` 与 `/oauth/consent`，且 consent 页面本身声明为公开。虽然 `@ipa-schema/auth@1.0.0` 的客户端 `DEFAULT_PUBLIC_ROUTES` 只列出 `/__nuxt_error`，它不决定上述服务端路由是否放行。因此项目的 `publicRoutes` 只需限定为自行验证 Bearer token 的 `/api/v1/mcp`。
+**发布依赖依据**：`@nuxt-tmpl/nuxt@0.2.10` 的服务端鉴权中间件从 `@nuxt-tmpl/core@0.2.10` 调用 `isSafeRoute`；core 对原始路径内置豁免 `/.well-known` 与 `/oauth/consent`。英文 consent 带 `/en` 前缀，不命中该内置项，故项目为其增加锚定的 `re:^/en/oauth/consent/?$` public 别名。客户端 `getAuthMode` 使用相同路由配置；`shared/utils/auth-routes.ts` 的回归用例同时检查两端，并确认未知英文路径与业务 API 仍为 required/非 safe。
 
 ### 6.2 项目自建（模板未提供）
 
@@ -599,7 +599,7 @@ export default defineEventHandler(async (event) => {
 ### 阶段 2 · 模板 MCP 能力接入
 
 - [ ] `nuxt.config.ts`：`mcp: { enabled: true }`
-- [ ] `nuxt.config.ts`：`auth.publicRoutes` 配置 `/api/v1/mcp`（不要放行整个 `/api/v1`，以保留同级 API 的全局鉴权；`/.well-known`、`/oauth/consent` 由 core 内置豁免）
+- [ ] `nuxt.config.ts`：`auth.publicRoutes` 精确配置 `/api/v1/mcp` 与 `re:^/en/oauth/consent/?$`；保留默认路径 `/.well-known`、`/oauth/consent` 的 core 内置豁免，英文 guest aliases 见 `shared/utils/auth-routes.ts`
 - [ ] 确认部署环境 `NUXT_PUBLIC_AUTH_PROVIDER=supabase`
 - [ ] 确认 `@nuxt-tmpl/nuxt` 与 `@nuxt-tmpl/core` 同为 `0.2.10`（阶段 1 成果，R6）
 
