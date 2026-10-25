@@ -262,27 +262,33 @@ sequenceDiagram
 
 **为什么 MCP 路径能命中策略**：MCP 数据访问走 `createTokenSupabaseClient(token)`（D8），请求携带**调用者的 JWT**；PostgREST 据此填充 `auth.jwt()`，RLS 按**调用者身份**生效——与 HTTP 管理接口走会话 cookie 的效果等价。
 
-**`promotion` 表需要的最小策略集**（Supabase 控制台手工执行；仓库内无 migration，见 R13）：
+**`promotion` 表需要的最小策略集**（已固化为仓库工件 `supabase/migrations/20261026000000_promotion_rls.sql`；**真源是 `scripts/rls-policy-spec.mjs`**，工件与 `verify-mcp.mjs` 的断言都由它生成，漂移由 `pnpm test` 拦下）：
 
 ```sql
+-- public.promotion 的 RLS 策略（幂等：可重复执行，结果一致）
 alter table public.promotion enable row level security;
 
 -- 读：公开读已上架的（网站匿名读 + 任意已认证用户的 MCP 读都命中这条）
+drop policy if exists "promotion_select_active" on public.promotion;
 create policy "promotion_select_active"
   on public.promotion for select
   using (is_active = true);
 
--- 读：管理员可读全部（含已下架）
+-- 读：管理员可读全部（含已下架），缺失时 includeInactive=true 会静默返回空集
+drop policy if exists "promotion_select_admin" on public.promotion;
 create policy "promotion_select_admin"
   on public.promotion for select
   using (auth.jwt() -> 'app_metadata' ->> 'role' = 'admin');
 
 -- 写：仅管理员（insert/update/delete）
+drop policy if exists "promotion_write_admin" on public.promotion;
 create policy "promotion_write_admin"
   on public.promotion for all
   using (auth.jwt() -> 'app_metadata' ->> 'role' = 'admin')
   with check (auth.jwt() -> 'app_metadata' ->> 'role' = 'admin');
 ```
+
+**工件 ≠ 已上线**：该文件只是期望状态的版本化载体，本仓库的任何脚本都不会连接或执行到共享 Supabase 库。执行需要 leoking 逐次批准，且先用只读核验确认现状——手工执行过的库不需要重放，只有未执行过的库才需要按工件上线。只读核验查询同样来自真源（`rlsVerificationQueries()`），`pnpm test:mcp` 会在连接数据库的第一步就按它比对，策略名、cmd、`using`/`with check` 判据任一漂移都会报出具体差异。
 
 **策略缺失/不匹配的两种典型故障（都要在验收里覆盖）**
 
@@ -551,7 +557,7 @@ export default defineEventHandler(async (event) => {
 
 | # | 等级 | 风险 | 影响 | 缓解 / 归属 |
 |---|---|---|---|---|
-| **R1** | **P0** | **RLS 策略未落地 / 漂移**（产品已约定启用 RLS，但策略在 Supabase 手工执行、仓库内无 migration、无 CI 校验） | ① 缺写策略 → admin 的 MCP 写工具全部失败（fail-closed，不脏数据，但功能不可用）；② 缺 admin 读策略 → `includeInactive=true` **静默返回空集**；③ 策略被写宽（如 `using (true)`）→ anon 可读全部行、退化为无 RLS | ① 落地 §3.5 的三条策略；② 应用层 `assertAdmin` **保留不放松**（策略写宽时的最后闸门）；③ 非 admin 读在数据访问层**强制**过滤 `is_active = true`；④ 验收脚本断言 A7/A8（含 admin 分支）+ 断言 `pg_class.relrowsecurity = true` |
+| **R1** | **P0** | **RLS 策略未落地 / 漂移**（产品已约定启用 RLS；策略已入库为 `supabase/migrations/20261026000000_promotion_rls.sql`，但目标库是否执行过仍需只读核验，执行需 leoking 批准） | ① 缺写策略 → admin 的 MCP 写工具全部失败（fail-closed，不脏数据，但功能不可用）；② 缺 admin 读策略 → `includeInactive=true` **静默返回空集**；③ 策略被写宽（如 `using (true)`）→ anon 可读全部行、退化为无 RLS | ① 按 §3.5 工件上线三条策略（执行需批准，上线前先跑只读核验确认现状）；② 应用层 `assertAdmin` **保留不放松**（策略写宽时的最后闸门）；③ 非 admin 读在数据访问层**强制**过滤 `is_active = true`；④ 验收脚本断言 A7/A8（含 admin 分支）+ 断言 `pg_class.relrowsecurity = true`；⑤ 断言与工件同源（`scripts/rls-policy-spec.mjs`），③ 类"写宽"与 `user_metadata` 判据会被显式判失败，工件与真源的漂移由 `pnpm test` 拦下 |
 | **R2** | **P0（硬门禁）** | **Supabase OAuth 签发的 access token 的 claims 假设**：本方案假定其 `app_metadata` 含 `role`、且 `iss`/`aud` 与会话 token 一致 | 若 OAuth token 不带 `app_metadata` → 管理员判定恒为 false；**RLS 启用后影响更大**：`auth.jwt() -> 'app_metadata' ->> 'role'` 取不到 admin → RLS 写策略同样拒绝，MCP 写入**全线不可用**（fail-closed） | 阶段 3 验收脚本必须用**真实 OAuth 流程**取 token 并断言 `app_metadata.role === "admin"` 可判定（A11，**列为 MCP 上线前的硬门禁**）。若不成立 → 管理员判定需改为服务端查库（service role 读 `auth.users.raw_app_meta_data`），届时需单独立项 |
 | **R3** | P1 | **audience 未绑定 MCP resource**：Supabase OAuth 服务端可能忽略 RFC 8707 的 `resource` 参数，token 的 `aud` 只能是 `authenticated` | 为其它资源签发的 token 可能被重放到 MCP 端点 | 以 `iss` + `aud === "authenticated"` + 服务端 `getUser` 校验作为等效强度；记录为已知残留风险，接受 |
 | **R4** | P1 | **OAuth 同意页只授予 OIDC scope**（`openid/email/profile/phone`），无业务 scope | 不能用 scope 做业务鉴权 | 已定案：权限判定只用 `app_metadata.role`；写进 README 与工具描述 |
@@ -563,10 +569,10 @@ export default defineEventHandler(async (event) => {
 | **R10** | P2 | **无速率限制**：MCP 端点公开可达，写工具可被滥用（刷库） | 资源滥用 | 建议在网关/反代层加限流；本期不做 |
 | **R11** | P2 | **URL 缺少协议/格式强校验**（现状只要求非空） | 坏数据入库 | 契约层已收紧为"归一化后必须 http(s) 绝对地址"（B7/B8）；`coverUrl` 因支持 base64 保留宽松 |
 | **R12** | P2 | **契约严格化导致 HTTP API 行为收紧**（B1–B8） | 依赖宽松兜底的第三方调用方会收到 400 | **产品已确认采纳**（2026-10-24）；前端不受影响；建议在 README 记录 |
-| **R13** | P2 | **promotion 表 schema 与 RLS 策略不在仓库内**（Supabase 手工建表 / 手工执行策略），id 类型 / 字段长度 / 策略内容无从静态校验 | 契约的 `id` / 长度上限可能与真实表不符；RLS 策略可能与 §3.5 不一致 | 阶段 2 开工前先 `information_schema` + `pg_policies` 核对一次，把 id 类型与实际策略回填本文件 §4.2 / §3.5 |
+| **R13** | P2 | **promotion 表 schema 与 RLS 策略不在仓库内**（Supabase 手工建表 / 手工执行策略），id 类型 / 字段长度 / 策略内容无从静态校验 | 契约的 `id` / 长度上限可能与真实表不符；RLS 策略可能与 §3.5 不一致 | **策略部分已消除**：§3.5 的策略集已固化为 `supabase/migrations/20261026000000_promotion_rls.sql`（真源 `scripts/rls-policy-spec.mjs`），`verify-mcp.mjs` 的 RLS 断言与只读核验查询同源，漂移由 `pnpm test` 拦下；**上线仍需 leoking 批准执行**。**表结构部分未消除**：id 类型 / 字段长度仍需对真实库 `information_schema` 核对一次并回填 §4.2 |
 | **R14** | P3 | **每次 MCP 请求多一次 Auth 往返**（`getUser`） | 延迟 + Auth 配额 | 与 HTTP 管理接口同量级；可接受。后续可加短 TTL 缓存 |
 | **R15** | P3 | **`promotion.id` 类型未确认** | 契约里先按宽松 string 处理 | 若为 uuid → 收紧 `z.uuid()`（zod v4） |
-| **R16** | P3 | **RLS 策略与 `promotion` 表结构均无版本化载体**（无 migration / 无 schema 文件） | 表结构或策略变更只能靠人肉同步，容易与本文件脱节 | 本期接受；建议后续把 `promotion` 表的 schema + 策略纳入 `supabase/migrations`（本仓库目前没有该目录），使变更可评审、可回滚 |
+| **R16** | P3 | **RLS 策略与 `promotion` 表结构均无版本化载体**（无 migration / 无 schema 文件） | 表结构或策略变更只能靠人肉同步，容易与本文件脱节 | **策略部分本期已解决**：新增 `supabase/migrations/` 目录，策略以 Supabase CLI Migration 约定入库（`<ts>_<name>.sql`，执行走 `scripts/supabase db push`，需批准），评审与回滚有载体；真源仍是 `scripts/rls-policy-spec.mjs`，工件为生成物。**表结构（建表 DDL）仍未纳入**，见 §8.1 第 5 项 |
 
 ---
 
@@ -590,7 +596,7 @@ export default defineEventHandler(async (event) => {
 2. **写路径乐观锁**（R9）。
 3. **MCP 端点限流**（R10）。
 4. **封面上传的 MCP 工具化**（multipart 传输，生态支持差）。
-5. **`promotion` 表 schema + RLS 策略版本化**（纳入 `supabase/migrations`，R16）。
+5. **`promotion` 表 schema 版本化**（纳入 `supabase/migrations`，R16）—— **RLS 策略部分本期已完成**（`20261026000000_promotion_rls.sql`，真源 `scripts/rls-policy-spec.mjs`）；仍缺建表 DDL 与列类型/长度。
 
 ---
 
@@ -603,13 +609,15 @@ export default defineEventHandler(async (event) => {
 - [ ] 确认部署环境 `NUXT_PUBLIC_AUTH_PROVIDER=supabase`
 - [x] `@nuxt-tmpl/nuxt` 与 `@nuxt-tmpl/core` 同为 `0.2.11`，direct pin 和 workspace override 对齐
 
-### 阶段 2 · RLS 策略落地（Supabase 手工执行，见 §3.5）
+### 阶段 2 · RLS 策略落地（工件已入库；执行到目标库需 leoking 批准，见 §3.5）
 
-- [ ] `alter table public.promotion enable row level security;`
-- [ ] `promotion_select_active`（公开读已上架）
-- [ ] `promotion_select_admin`（管理员读全部）
-- [ ] `promotion_write_admin`（管理员写）
-- [ ] 核对现有策略与上述三条是否重复/冲突（策略是 OR 叠加的，冗余策略不会报错但会掩盖缺失）
+- [x] 策略集与只读核验查询入库：真源 `scripts/rls-policy-spec.mjs` → 工件 `supabase/migrations/20261026000000_promotion_rls.sql`（幂等，可重复执行）
+- [x] `alter table public.promotion enable row level security;`
+- [x] `promotion_select_active`（公开读已上架）
+- [x] `promotion_select_admin`（管理员读全部）
+- [x] `promotion_write_admin`（管理员写）
+- [ ] 用只读连接（`MCP_TEST_DATABASE_URL`）先核验目标库现状，再决定是否需要执行工件——手工执行过的库不必重放
+- [ ] 核对现有策略与上述三条是否重复/冲突（策略是 OR 叠加的，冗余策略不会报错但会掩盖缺失）；`verify-mcp.mjs` 会把未登记的额外策略判成漂移并列名
 - [ ] 把实际策略快照回填本文件 §3.5
 
 ### 阶段 2 · MCP server + 工具面 + 数据访问层
@@ -646,5 +654,5 @@ export default defineEventHandler(async (event) => {
 | A10 | `GET`/`DELETE /api/v1/mcp` → 405 且带 `Allow: POST` |
 | A11 | **R2 硬门禁**：真实 OAuth 流程拿到的 token 能把 admin 判定为 admin（非 admin 用户判定为非 admin）；且该 token 的 `app_metadata` 在 RLS 侧同样生效（写入成功即证明） |
 | A12 | MCP 响应体是 JSON-RPC（`jsonrpc`/`id`/`result`），**不是** `{code,data,message}` 信封（R7） |
-| A13 | **RLS 已启用**：`select relrowsecurity from pg_class where relname = 'promotion'` 为 `t`，且 `pg_policies` 中存在 §3.5 的三条策略 |
+| A13 | **RLS 已启用**：`select relrowsecurity from pg_class where relname = 'promotion'` 为 `t`，且 `pg_policies` 中存在 §3.5 的三条策略——核验查询与断言同源（`scripts/rls-policy-spec.mjs` → `verify-mcp.mjs` 的 `evaluateRlsState()`），逐条比对策略名、`cmd`、`using`/`with check` 判据，并拒绝恒真 `using`、`user_metadata` 判据与未登记的额外策略 |
 | A14 | **非 admin 写隔离**：用非 admin 的真实 OAuth token 直连 PostgREST 尝试 insert/update → 被 RLS 拒绝（DB 层闸门也生效，不只是应用层 403） |

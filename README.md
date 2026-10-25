@@ -132,6 +132,8 @@ pnpm test:mcp
 
 缺少变量、依赖或 `.output/server/index.mjs` 时脚本会打印中文缺项并以非零状态退出；缺少条件不算通过。运行前需确保目标库已准备好测试写入权限，脚本执行期间不要并行清理带 `MCP验收-` 前缀的临时记录。脚本不会打印 token、Cookie 或数据库连接串。检查范围及未验证门禁见 `docs/mcp-acceptance.md`。
 
+`promotion` 表的 RLS 三条策略（`promotion_select_active` / `promotion_select_admin` / `promotion_write_admin`）以 `scripts/rls-policy-spec.mjs` 为唯一真源，生成幂等的 `supabase/migrations/20261026000000_promotion_rls.sql`，脚本的 RLS 断言也读同一真源。**仓库里有工件不等于目标库已执行**：执行到共享 Supabase 库属于共享环境变更，需要单独批准；先跑只读核验确认现状。
+
 ## 数据库配置
 
 本分支默认使用 PostgreSQL（部署适配 Vercel）。在 Vercel 项目中配置：

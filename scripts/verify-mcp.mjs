@@ -10,6 +10,7 @@ import {
   createCheckReporter,
   verifyWriteIsolationFlow,
 } from "./verify-mcp-helpers.mjs"
+import { evaluateRlsState, migrationFileName, rlsVerificationQueries } from "./rls-policy-spec.mjs"
 
 const root = process.cwd()
 const missing = []
@@ -123,26 +124,15 @@ async function verifyRlsPolicies() {
   const db = new PostgresClient({ connectionString: process.env.MCP_TEST_DATABASE_URL, connectionTimeoutMillis: 10_000 })
   await db.connect()
   try {
-    const table = await db.query(`
-      select c.relrowsecurity as enabled
-      from pg_class c
-      join pg_namespace n on n.oid = c.relnamespace
-      where n.nspname = 'public' and c.relname = 'promotion'
-    `)
-    requireCheck("promotion 表存在且已启用 RLS", table.rows[0]?.enabled === true)
-
-    const policies = await db.query(`
-      select policyname, cmd, qual, with_check
-      from pg_policies
-      where schemaname = 'public' and tablename = 'promotion'
-    `)
-    const byName = new Map(policies.rows.map(row => [row.policyname, row]))
-    const active = byName.get("promotion_select_active")
-    const adminSelect = byName.get("promotion_select_admin")
-    const adminWrite = byName.get("promotion_write_admin")
-    requireCheck("存在仅允许读取上架记录的 promotion_select_active 策略", Boolean(active && active.cmd === "SELECT" && /is_active\s*=\s*true/i.test(String(active.qual))))
-    requireCheck("存在基于 app_metadata.role 的 promotion_select_admin 策略", Boolean(adminSelect && adminSelect.cmd === "SELECT" && /app_metadata/i.test(String(adminSelect.qual)) && /role/i.test(String(adminSelect.qual))))
-    requireCheck("存在基于 app_metadata.role 的 promotion_write_admin 策略", Boolean(adminWrite && adminWrite.cmd === "ALL" && /app_metadata/i.test(`${adminWrite.qual} ${adminWrite.with_check}`) && /role/i.test(`${adminWrite.qual} ${adminWrite.with_check}`)))
+    const queries = rlsVerificationQueries()
+    const table = await db.query(queries.table)
+    const policies = await db.query(queries.policies)
+    const failed = []
+    for (const item of evaluateRlsState({ rlsEnabled: table.rows[0]?.enabled === true, policies: policies.rows })) {
+      check(item.label, item.ok, item.detail)
+      if (!item.ok) failed.push(`${item.label}${item.detail ? `（${item.detail}）` : ""}`)
+    }
+    if (failed.length) throw new CheckFailure(`RLS 现状与 ${migrationFileName()} 不符：${failed.join("；")}`)
   }
   finally {
     await db.end()
