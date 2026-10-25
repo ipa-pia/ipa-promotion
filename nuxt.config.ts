@@ -117,11 +117,9 @@ export default defineNuxtConfig({
       enabled: true,
       afterSignInRoute: "/dashboard",
       guestRoutes: ["/dashboard"],
-      // MCP / OAuth 发现相关路径必须显式放行：已发布的 @ipa-schema/auth@1.0.0
-      // DEFAULT_PUBLIC_ROUTES 只有 /__nuxt_error，不包含 /.well-known 与 /oauth。
+      // MCP 使用 Bearer Token 自行鉴权，因此只豁免 MCP 路径，避免同级 API 跳过全局鉴权。
       // 模板按「路径段前缀」匹配（/a 覆盖 /a/x/y，/ 只匹配根）。
-      // 缺了这里，MCP 发现请求会被鉴权中间件按未登录 302 到 /（/api/* 则 401）。
-      publicRoutes: ["/api/v1", "/.well-known", "/oauth"],
+      publicRoutes: ["/api/v1/mcp", "/.well-known", "/oauth"],
     },
     mcp: {
       // 模板默认 mcp.enabled: false，必须显式打开，否则发现元数据不会注册（静默 404）。
