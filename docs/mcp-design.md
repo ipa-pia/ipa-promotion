@@ -296,9 +296,11 @@ commit;
 
 **工件 ≠ 已上线**：该文件只是期望状态的版本化载体，本仓库的任何脚本都不会连接或执行到共享 Supabase 库。执行需要 leoking 逐次批准，**且"核对现有策略是否与这三条重复/冲突"是执行的前置条件而不是收尾项**——工件只按名字覆盖这三条，从不删除其它策略；手工执行过的库里若另有未登记策略（或同义但异名的策略），重放"成功"之后 RLS 仍是这些策略与三条叠加的状态：`permissive` 的与三条 OR 叠加（放宽），`restrictive` 的再与之 AND 叠加（收窄），两个方向都可能出错，只有 `verify-mcp.mjs` 的漂移断言会把它报出来——断言按未登记行的 `permissive` 取值算方向，不无条件写"放宽"。只读核验查询同样来自真源（`rlsVerificationQueries()`），`pnpm test:mcp` 会在连接数据库的第一步就按它比对，策略名、`cmd`、`roles`、`permissive`、`using`/`with check` 任一与工件不是同一形状都会列出原始值。
 
-**本节 SQL 块的门禁方式：集合相等，不是关键字黑名单。** `pnpm test` 要求本块内的语句集合**等于** `renderMigrationSql()` 渲染出的语句集合（逐条规范化后比较），多一条少一条都红。`drop table` / `owner to` / `truncate` / `create role` / `set role` / `grant` / `revoke` / `force row level security` 因此一次性封住，不必逐个关键词追——真正的风险面是操作员照本节手工复制执行，黑名单永远追不上新写法。
+**本节 SQL 块的门禁方式：冻结的形状上限 + 与真源的语句集合相等。** 上限写在测试里、字面量自行冻结（**不从渲染器取**），每条语句整句匹配，工件与 §3.5 两块都受它约束——若上限由被约束的渲染器提供，就退化成自比对本体：复验实测渲染器被加上 `delete from` / `disable row level security` / 换拼法的 `revoke usage` 后整套测试全绿，所以 #15 那条黑名单的"绝对上限"必须保留。集合相等再补一层，封住"§3.5 相对工件夹带或漏掉任何一条语句"：`drop table` / `owner to` / `truncate` / `create role` / `set role` / `grant` / `revoke` / `force row level security` 都在此列，不必逐个关键词追——真正的风险面是操作员照本节手工复制执行，黑名单永远追不上新写法。两条门禁的**结构断言都按子句顺序无关**实现（复验 R4）：分授真要落地时写出的正宗 `as permissive for select to …` 形状不该把结构断言打红、被误读成"分授语义有问题"。
 
-**为什么 `roles` 钉成 `{public}`**：工件的 `create policy` 不写 `to`/`as`，Postgres 的隐含语义就是 `to public as permissive`，所以 `roles` 期望只能是 `public`（`pg_policies.roles` 渲染为 `{public}`）。这是与省略写法**唯一自洽**的取值，不是说按角色分授不可行。真要分授（例如把公开读拆成 `anon` + `authenticated`）属于发版前的设计变更：必须同时改 `renderPolicySql()` 显式渲染 `to`/`as`、同步本节 SQL 块与真源的期望集，并由 `pnpm test` 里的「to/as 生效语义」用例把关——子句在语句内部 `for <cmd>` 与 `using (` 之间解析（不做行首锚定），解析出来就与真源期望做**集合相等**比对，解析不出才按 Postgres 默认补成 `public` + permissive。两个方向的暴露点不对称，按实测写：**只改真源的期望（工件不动）本地就红**，补齐后的默认值与期望直接比对，不需要连库；过去只有连上真实库才暴露的是**只改工件侧的 `to`/`as` 而期望不动**——尤其把 `to authenticated` 与 `for select` 写成同一行时，行首锚定的探测会当成"省略"从而整条用例空转。这类漏现在由子句解析 + 集合相等拦下，`to public, promotion_superuser`、同行 `to authenticated`、`as restrictive` 都已进回归夹具，本节的 SQL 块也走同一份检查。**所以分授改动必须在执行工件之前定，且必须先完成这条子句解析门禁**——否则同一行的 `to authenticated` 能全绿通过整套测试，把只读公开范围悄悄收窄。
+**为什么 `roles` 钉成 `{public}`**：工件的 `create policy` 不写 `to`/`as`，Postgres 的隐含语义就是 `to public as permissive`，所以 `roles` 期望只能是 `public`（`pg_policies.roles` 渲染为 `{public}`）。这是与省略写法**唯一自洽**的取值，不是说按角色分授不可行。真要分授（例如把公开读拆成 `anon` + `authenticated`）属于发版前的设计变更：必须同时改 `renderPolicySql()` 显式渲染 `to`/`as`、同步本节 SQL 块与真源的期望集，并由 `pnpm test` 里的「to/as 生效语义」用例把关——子句在语句内部解析（不做行首锚定、也不依赖 `FOR` 一定存在），解析出来就与真源期望做**集合相等**比对；确实省略才按 Postgres 默认补成 `public` + permissive；**head 里有 `to` 却没解析出角色集时判"未识别形状，需人工复核"，不补默认值**——因为缺省恰好等于期望时，"授了别的角色只是形状没被认出来"会变成静默绿灯。两个方向的暴露点不对称，按实测写：**只改真源的期望（工件不动）本地就红**，补齐后的默认值与期望直接比对，不需要连库；过去只有连上真实库才暴露的是**只改工件侧的 `to`/`as` 而期望不动**——尤其把 `to authenticated` 与 `for select` 写成同一行时，行首锚定的探测会当成"省略"从而整条用例空转。这类漏现在由子句解析 + 集合相等拦下，`to public, promotion_superuser`、同行 `to authenticated`、`as restrictive` 都已进回归夹具，本节的 SQL 块也走同一份检查。**所以分授改动必须在执行工件之前定，且必须先完成这条子句解析门禁**——在它合入之前，同一行书写的 `to authenticated` 能全绿通过整套测试，把只读公开范围悄悄收窄。
+
+**`to public` 含此后新建的任何角色（这是产品取舍，不是实现细节）**：`PUBLIC` 是角色全集，覆盖当前**与未来**的所有角色。选了"不分授"，就意味着今后 `create role` 出来的任何角色**不需要任何授权动作**自动落入这三条公开读策略；反过来，`service_role` 带 `BYPASSRLS`、根本不受策略约束，所以"新角色没被 grant 过、自然兜得住"这种想法在 PostgREST 路径上看似成立、语义上并不等价。要排除未来角色只有分授一条路，而那是一次渲染器 + §3.5 + 期望集同改的设计变更。**这个取舍必须在执行工件之前定**：事后改要重放，事后也没有任何"未登记的宽策略"会被自动清掉（工件只按名字覆盖这三条）。
 
 **策略缺失/不匹配的两种典型故障（都要在验收里覆盖）**
 
@@ -626,8 +628,8 @@ export default defineEventHandler(async (event) => {
 - [x] `promotion_select_active`（公开读已上架）
 - [x] `promotion_select_admin`（管理员读全部）
 - [x] `promotion_write_admin`（管理员写）
-- [ ] **执行前置**：用只读连接（`MCP_TEST_DATABASE_URL`）核对现有策略与上述三条是否重复/冲突（策略是叠加的，冗余策略不会报错但会掩盖缺失；工件从不删除未登记策略，重放"成功"后 RLS 仍可能是未登记策略与三条叠加的放宽或收窄态）；`verify-mcp.mjs` 会把未登记的额外策略判成漂移，并列出该行的 `cmd`/`permissive`/`roles`/`qual` 原文与叠加方向
-- [ ] **执行前置（若决定按角色分授）**：先确认 §3.5 的 `to`/`as` 子句解析门禁已在 `feat/mcp` 上生效——子句在语句内部解析并与真源期望做集合相等，而不是行首锚定探测。缺这一条时，`for select to authenticated` 写成同一行会被当成"省略 to"，整套 `pnpm test` 仍全绿，而目标库的公开读已被悄悄收窄；这类改动应在执行工件之前定
+- [ ] **执行前置**：用只读连接（`MCP_TEST_DATABASE_URL`）核对现有策略与上述三条是否重复/冲突（策略是叠加的，冗余策略不会报错但会掩盖缺失；工件从不删除未登记策略，重放"成功"后 RLS 仍可能是未登记策略与三条叠加的放宽或收窄态）；`verify-mcp.mjs` 会把未登记的额外策略判成漂移，并列出该行的 `cmd`/`permissive`/`roles`/`qual` 原文与叠加方向。**别用"新角色没被 grant 过所以自然兜住"代替核验**：工件不写 `to` 就是 `to public`，`PUBLIC` 覆盖此后 `create role` 出来的任何角色，新角色无需任何授权动作即落入三条公开读策略；`service_role` 另有 `BYPASSRLS`，不受策略约束
+- [ ] **执行前置（若决定按角色分授）**：先确认 §3.5 的 `to`/`as` 子句解析门禁已在 `feat/mcp` 上生效（#16 起：子句在语句内部解析、与真源期望做集合相等，head 里有 `to` 却没解析出来时判"未识别形状"而不是补 `public`）。在这条门禁合入之前，`for select to authenticated` 写成同一行会被当成"省略 to"、整套 `pnpm test` 仍全绿，而目标库的公开读已被悄悄收窄。真要落地分授，同改的是三处：`renderPolicySql()` 显式渲染 `to`/`as` + 本节 SQL 块 + 真源的期望角色集；结构断言与形状上限已按子句顺序无关实现，不需要跟着改（复验 R4）
 - [ ] 用同一只读连接确认目标库现状，再决定是否需要执行工件——手工执行过且与工件同形的库不必重放
 - [ ] 把实际策略快照回填本文件 §3.5
 

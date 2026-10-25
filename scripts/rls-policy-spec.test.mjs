@@ -24,12 +24,18 @@ const ADMIN_EXPRESSION = "((auth.jwt() -> 'app_metadata' ->> 'role'::text) = 'ad
 const DEFAULT_ROLE = "public"
 const DEFAULT_PERMISSIVE = true
 
+// 与 `evaluateRlsState()` 的 UNRECOGNISED 同一约定：解析器认不出的形状交人工复核，不补默认值。
+const UNRECOGNISED = "未识别形状，需人工复核"
+
 function sqlBlocks(markdown) {
   return [...markdown.matchAll(/```sql\n([\s\S]*?)```/g)].map(match => match[1])
 }
 
+// 识别 §3.5 的块只看"这是不是 promotion 三条策略的 sql 块"，不看子句写法：以字面
+// `on public.promotion for` 认块时，分授落地写出的 `on public.promotion as permissive for select`
+// 会让块识别直接归零，报成"§3.5 应恰有一个 sql 块"（复验 T17）。
 function isPromotionRlsBlock(block) {
-  return block.includes(`on ${RLS_TARGET.qualified} for`)
+  return /create policy "promotion_(?:select_active|select_admin|write_admin)"/i.test(block)
 }
 
 function designRlsBlocks() {
@@ -81,23 +87,40 @@ function createPolicyNames(sql) {
 // 语句里的授权子句。Postgres 的语法顺序是 `… ON table [AS permissive|restrictive] [FOR cmd] [TO roles] [USING …]`，
 // 所以 `to` 只在 `for <cmd>` 之后、`as` 只在 `using (` 之前找；行首锚定会被 `for select to authenticated`
 // 这种同行书写骗成"省略了子句"（复验的 V7 漏）。
+//
+// 双引号标识符（策略名、引号角色名）先挖空再定位 `using (`，否则名字里含 `using (` 会把 head
+// 截断在真正的子句之前（复验 T2 的漏）。挖空只用于定位，`to` 的角色列表仍从原文里取。
 function parseClauses(statement) {
-  const using = statement.toLowerCase().indexOf("using (")
+  // 长度不变的挖空：只让双引号标识符里的内容对定位不可见，索引仍与原文一一对应。
+  const masked = statement.replace(/"[^"]*"/g, match => " ".repeat(match.length))
+  const using = masked.toLowerCase().indexOf("using (")
   const head = statement.slice(0, using < 0 ? statement.length : using)
+  const headMasked = masked.slice(0, using < 0 ? masked.length : using)
   const asMatch = /\bas\s+(permissive|restrictive)\b/i.exec(head)
   const forMatch = /\bfor\s+(?:select|insert|update|delete|all)\b/i.exec(head)
   const afterCommand = forMatch ? head.slice(forMatch.index + forMatch[0].length) : ""
   const toMatch = /\bto\s+(.+?)(?:\s+as\s+(?:permissive|restrictive))?\s*$/is.exec(afterCommand.trim())
+  // R1：`省略` 与 `没认出来` 必须在数据上可分。head 里明明有 `to` 却没解析出角色集（例如整条没写
+  // `FOR`，`afterCommand` 退化成空串）时判未识别，不再补 `public`——否则"库里授了别的角色、只是
+  // 形状没被认出来"会补成默认值恰好等于期望，成为静默绿灯（复验优先项 1 的 T1 漏）。
+  // `using (` 出现两次同样按未识别处理：窗口截点不可信时任何缺省补齐都不该放行。
+  const unrecognized = (toMatch === null && /\bto\b/i.test(headMasked))
+    || (using >= 0 && masked.toLowerCase().indexOf("using (", using + 1) >= 0)
   return {
     roles: toMatch ? toMatch[1].split(",").map(name => name.trim().toLowerCase()).filter(Boolean).sort() : null,
     permissive: asMatch ? asMatch[1].toLowerCase() === "permissive" : null,
+    unrecognized,
   }
 }
 
-// 生效语义：解析到的子句，缺省按 Postgres 的省略默认补齐。
+// 生效语义：解析到的子句照抄；确实省略的按 Postgres 缺省补齐；认不出来的不补，交给子句断言报未识别。
 function effectiveClauses(statement) {
   const clauses = parseClauses(statement)
-  return { roles: clauses.roles ?? [DEFAULT_ROLE], permissive: clauses.permissive ?? DEFAULT_PERMISSIVE }
+  return {
+    roles: clauses.roles ?? (clauses.unrecognized ? null : [DEFAULT_ROLE]),
+    permissive: clauses.permissive ?? (clauses.unrecognized ? null : DEFAULT_PERMISSIVE),
+    unrecognized: clauses.unrecognized,
+  }
 }
 
 // 子句检查对工件与 §3.5 的块用同一份：分授写法今天只在工件里，块里单独改子句以前没人比（V8 漏）。
@@ -106,9 +129,52 @@ function expectPolicyClauses(sql) {
     const statement = createPolicyStatement(sql, policy.name)
     expect(statement, `缺少 create policy ${policy.name}`).not.toBeNull()
     const clauses = effectiveClauses(statement)
-    expect(clauses.roles, `${policy.name} 的生效角色集与真源期望不一致：块里是 ${clauses.roles.join(" / ")}，真源要求 ${[...policy.roles].sort().join(" / ")}`).toEqual([...policy.roles].sort())
+    expect(clauses.unrecognized, `${policy.name} 的授权子句形状未被解析器识别（有 to 却没解析出角色集，或 using ( 出现两次），${UNRECOGNISED}；不补 Postgres 缺省值，因为缺省恰好等于期望时会把写宽的形状放成绿灯`).toBe(false)
+    expect(clauses.roles, `${policy.name} 的生效角色集与真源期望不一致：块里是 ${clauses.roles?.join(" / ") ?? "（未识别）"}，真源要求 ${[...policy.roles].sort().join(" / ")}`).toEqual([...policy.roles].sort())
     expect(clauses.permissive, `${policy.name} 的生效叠加方式是 ${clauses.permissive ? "permissive" : "restrictive"}，真源要求 ${policy.permissive ? "permissive" : "restrictive"}`).toBe(policy.permissive)
   }
+}
+
+// 子句段（可选、顺序无关）。三条子句都可以省略，省略即 Postgres 缺省。
+const SHAPE_AS = "as (?:permissive|restrictive)"
+const SHAPE_FOR = "for (?:all|delete|insert|select|update)"
+const SHAPE_TO = "to [\x22a-z0-9_ ]+(?:, *[\x22a-z0-9_ ]+)*"
+const SHAPE_CLAUSE = `(?:${SHAPE_AS}|${SHAPE_FOR}|${SHAPE_TO})`
+const SHAPE_CLAUSES = `(?: ${SHAPE_CLAUSE})+`
+
+function escapePattern(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+// 工件允许出现的**全部**语句形状，逐句整句匹配。字面量是本用例自己冻结的，**不从真源取**：
+// RLS 工件的绝对上限若由被约束的渲染器提供，就退化成自比对本体（复验第 3 节 T11/T15/T16 实测：
+// 渲染器被加上 `delete from` / `disable row level security` / 换拼法的 `revoke usage` 后，#16 那批 89 项仍全绿）。
+// 子句段按 SHAPE_CLAUSES 匹配，所以分授落地时写出正宗 `as permissive for select to …` 不会撞这条上限。
+function allowedStatementPatterns() {
+  const predicates = {
+    promotion_select_active: ["is_active = true", null],
+    promotion_select_admin: ["auth.jwt() -> 'app_metadata' ->> 'role' = 'admin'", null],
+    promotion_write_admin: ["auth.jwt() -> 'app_metadata' ->> 'role' = 'admin'", "auth.jwt() -> 'app_metadata' ->> 'role' = 'admin'"],
+  }
+  const table = escapePattern(RLS_TARGET.qualified)
+  const createPolicy = ([name, [using, withCheck]]) => new RegExp(
+    `^create policy "${escapePattern(name)}" on ${table}${SHAPE_CLAUSES}? using \\(${escapePattern(using)}\\)`
+    + `${withCheck ? `(?: with check \\(${escapePattern(withCheck)}\\))?` : ""}$`,
+  )
+  return [
+    /^begin$/,
+    /^commit$/,
+    new RegExp(`^alter table ${table} enable row level security$`),
+    ...Object.keys(predicates).map(name => new RegExp(`^drop policy if exists "${escapePattern(name)}" on ${table}$`)),
+    ...Object.entries(predicates).map(createPolicy),
+  ]
+}
+
+// 返回不在上限内的语句：`disable row level security`、`delete from`、`grant`/`revoke`、`drop table`、
+// `truncate`、`create role`、`set role`、`owner to` 都落在这里，而不是靠关键词一个个追。
+function unexpectedStatements(sql) {
+  const allowed = allowedStatementPatterns()
+  return sqlStatements(sql).filter(statement => !allowed.some(pattern => pattern.test(statement)))
 }
 
 // 去掉 `--` 注释行、按分号切句、空白规范化并小写，用来比较"块里到底执行了哪些语句"。
@@ -123,27 +189,42 @@ function sqlStatements(sql) {
     .sort()
 }
 
-// 同一条比对同时用于生成的 migration 工件与 docs/mcp-design.md §3.5 的 SQL 块。
-// 块里到底执行了哪些语句必须与真源渲染出的集合**相等**：操作员会照 §3.5 手工执行，
-// 风险面是"块里多出的任何一条语句"，`drop table`/`owner to`/`truncate`/`create role`/`set role`
-// 这类关键词黑名单永远追不上（复验 P3 的判定）。
-function expectRlsSqlBlock(sql) {
+// ① 形状上限 + ② 与真源渲染结果的语句集合相等。
+function expectRlsSqlShapes(sql) {
+  const outside = unexpectedStatements(sql)
+  expect(outside, `有形状上限之外的语句：${outside.join("；")}`).toEqual([])
   const expected = sqlStatements(renderMigrationSql())
   const actual = sqlStatements(sql)
   const extra = actual.filter(statement => !expected.includes(statement))
   const missing = expected.filter(statement => !actual.includes(statement))
   expect(extra, `块里夹带了工件之外的语句：${extra.join("；")}${missing.length ? `；还缺少：${missing.join("；")}` : ""}`).toEqual([])
   expect(missing, `块里缺少工件要求的语句：${missing.join("；")}${extra.length ? `；还夹带了：${extra.join("；")}` : ""}`).toEqual([])
+}
+
+// ③ 三条策略的名字、判据与授权子句逐字同形。
+function expectRlsSqlStructure(sql) {
   expect(createPolicyNames(sql), "create policy 的名字集合必须与真源一致").toEqual(policyNames)
   for (const policy of RLS_POLICIES) {
     const statement = createPolicyStatement(sql, policy.name)
     expect(statement, `缺少 create policy ${policy.name}`).not.toBeNull()
-    expect(statement).toContain(`  on ${RLS_TARGET.qualified} for ${policy.command.toLowerCase()}`)
-    expect(statement).toContain(`using (${policy.using})`)
-    if (policy.withCheck) expect(statement).toContain(`with check (${policy.withCheck})`)
-    else expect(statement).not.toContain("with check")
+    const normalized = statement.replace(/;$/, "").replace(/\s+/g, " ").trim().toLowerCase()
+    const command = normalized.match(/\bfor (all|delete|insert|select|update)\b/)?.[1] ?? "select"
+    expect(command, `${policy.name} 的 for 子句是 ${command}，真源要求 ${policy.command.toLowerCase()}（省略时 Postgres 缺省为 for select）`).toBe(policy.command.toLowerCase())
+    expect(normalized, `${policy.name} 的 using 判据与真源不同形`).toContain(`using (${policy.using.toLowerCase()})`)
+    if (policy.withCheck) expect(normalized, `${policy.name} 的 with check 判据与真源不同形`).toContain(`with check (${policy.withCheck.toLowerCase()})`)
+    else expect(normalized, `${policy.name} 是只读策略却带 with check，真源没有登记这一项`).not.toContain("with check")
   }
   expectPolicyClauses(sql)
+}
+
+// 同一条比对同时用于生成的 migration 工件与 docs/mcp-design.md §3.5 的 SQL 块。
+// 风险面是操作员照 §3.5 手工执行，所以块里多出的任何一条语句都必须被拦下：形状上限是绝对上限
+// （不随渲染器改变），关键词黑名单（`drop table`/`owner to`/`truncate`/`create role`/`set role`）
+// 永远追不上新写法。结构断言一律子句顺序无关（复验 R4/T17）：分授真要落地时写出的正宗
+// `as permissive for select to …` 形状不该把 8 项结构断言打红、被误读成"分授语义有问题"。
+function expectRlsSqlBlock(sql) {
+  expectRlsSqlShapes(sql)
+  expectRlsSqlStructure(sql)
 }
 
 // 把子句插进每条 `create policy` 的 `using (` 之前（与工件一样的多行排布）。
@@ -164,6 +245,15 @@ function inlineClause(sql, clause) {
       .replace(/\bfor\s+(select|insert|update|delete|all)\b/i, (_match, command) => ` for ${command} ${clause}`)
     return text.split(statement).join(`${inlined};`)
   }, sql)
+}
+
+// 正宗 Postgres 子句顺序：`on <table> as permissive for <cmd> to <roles> using (…)`。
+// 这是按角色分授真要落地时渲染器会写出的形状，用来证明结构断言与形状上限都不依赖子句顺序。
+function withCanonicalClauseOrder(sql) {
+  return sql.replace(
+    /create policy "(promotion_[a-z_]+)"\n(\s+)on (public\.promotion) for (select|all)/g,
+    (_match, name, indent, table, command) => `create policy "${name}"\n${indent}on ${table} as permissive for ${command} to public`,
+  )
 }
 
 // 期望没动、工件或 §3.5 的授权子句先变了——复验实测的三个漏（V6/V7/V8）加一个只写 as 的变体。
@@ -299,30 +389,100 @@ describe("promotion RLS 工件与真源一致", () => {
     `set role promotion_writer;`,
   ]
 
+  // 形状上限对未登记语句先咬住；集合相等作为第二层由下面的子句变异用例证明。
   for (const ddl of UNREGISTERED_DDL) {
     it(`§3.5 夹带「${ddl}」时断言失败`, () => {
-      expect(() => expectRlsSqlBlock(`${designRlsBlocks()[0]}\n${ddl}`), ddl).toThrow(/夹带了工件之外的语句/)
+      expect(() => expectRlsSqlBlock(`${designRlsBlocks()[0]}\n${ddl}`), ddl).toThrow(/上限之外的语句/)
     })
   }
 
-  // 省略写法（工件现在就是这个形状）必须解析成"没有子句"，生效语义由 Postgres 默认补齐，
-  // 并与真源期望逐条一致——期望漂离默认值时这里红，不需要等连上真实库。
-  it("省略 to/as 的工件：生效语义按 Postgres 默认补齐为 public + permissive", () => {
+  // R2：#15 的黑名单原本对**工件**也是绝对上限，#16 换成集合相等后工件侧退化成自比对本体
+  // （复验第 3 节）。渲染器被改动 + 工件重生成 + §3.5 同步这三步全做时，下面四条在 #16 的 89 项里全绿。
+  const RENDERER_ADDITIONS = [
+    { id: "T11", statement: `delete from ${RLS_TARGET.qualified} where is_active = true;` },
+    { id: "T15", statement: `alter table ${RLS_TARGET.qualified} disable row level security;` },
+    { id: "T16", statement: "revoke usage on schema public from anon;" },
+    { id: "T9", statement: `drop table if exists ${RLS_TARGET.qualified};` },
+  ]
+
+  for (const { id, statement } of RENDERER_ADDITIONS) {
+    it(`${id}：渲染器加上「${statement}」并同步 §3.5 时，工件侧仍必须红`, () => {
+      const mutated = renderMigrationSql().replace(/^commit;$/m, `${statement}\n\ncommit;`)
+      const block = designRlsBlocks()[0].replace(/^commit;$/m, `${statement}\n\ncommit;`)
+      // 证明夹具模拟的是"三步全做"（两边同改）：此时集合相等这一层按构造分不出方向，只有上限能报。
+      expect(sqlStatements(block), id).toEqual(sqlStatements(mutated))
+      expect(() => expectRlsSqlShapes(mutated), id).toThrow(/上限之外的语句/)
+      expect(() => expectRlsSqlBlock(block), id).toThrow(/上限之外的语句/)
+      // 未改动的工件与 §3.5 必须仍是绿的：证明报的是被注入的语句，不是夹具自己的形状。
+      expect(unexpectedStatements(renderMigrationSql()), id).toEqual([])
+    })
+  }
+
+  // 省略写法（工件现在就是这个形状）解析成"没有子句"，生效语义由 Postgres 缺省补齐；
+  // 这条自洽性是双向的：写出子句时子句必须等于期望，所以分授落地不会误红（复验 R4 的第 3 处）。
+  it("工件的子句形状与真源期望自洽：省略子句 ⟺ 期望恰为 public + permissive", () => {
     for (const policy of RLS_POLICIES) {
       const statement = createPolicyStatement(renderMigrationSql(), policy.name)
-      expect(parseClauses(statement).roles, `${policy.name} 不该解析出 to 子句`).toBeNull()
-      expect(parseClauses(statement).permissive, `${policy.name} 不该解析出 as 子句`).toBeNull()
-      expect(effectiveClauses(statement), policy.name).toEqual({ roles: ["public"], permissive: true })
-      expect([...policy.roles].sort(), `${policy.name} 的期望角色集必须与省略默认一致`).toEqual(["public"])
-      expect(policy.permissive, `${policy.name} 的期望叠加方式必须与省略默认一致`).toBe(true)
+      const clauses = parseClauses(statement)
+      expect(clauses.unrecognized, `${policy.name} 的子句必须能被解析器识别或确实省略`).toBe(false)
+      if (clauses.roles === null && clauses.permissive === null) {
+        expect([...policy.roles].sort(), `${policy.name} 省略子句却要求非 public：工件的省略写法与期望不再自洽`).toEqual(["public"])
+        expect(policy.permissive, `${policy.name} 省略子句却要求 restrictive`).toBe(true)
+      }
+      else {
+        expect(clauses.roles, policy.name).toEqual([...policy.roles].sort())
+        expect(clauses.permissive, policy.name).toBe(policy.permissive)
+      }
     }
+  })
+
+  // R1：`to authenticated` 但整条没写 `FOR` 时，解析窗口退化成空串——以前补成 public 恰好等于期望，
+  // 子句断言是绿的（复验 T1）。现在必须报未识别，"省略"与"没认出来"在数据上可分。
+  it("R1：有 to 却没解析出角色集时判未识别，不补 Postgres 缺省", () => {
+    const noFor = RLS_POLICIES.reduce((text, policy) => {
+      const statement = createPolicyStatement(text, policy.name)
+      return text.split(statement).join(statement.replace(/\bfor (select|all)\b/i, "to authenticated"))
+    }, renderMigrationSql())
+    const statement = createPolicyStatement(noFor, "promotion_select_active")
+    const clauses = parseClauses(statement)
+    expect(clauses.roles, "没有 FOR 时解析窗口为空，不该假装解析出了角色集").toBeNull()
+    expect(clauses.unrecognized, "head 里明明有 to，必须标为未识别").toBe(true)
+    expect(effectiveClauses(statement).roles, "未识别时不补 public").toBeNull()
+    expect(() => expectPolicyClauses(noFor)).toThrow(/未识别形状，需人工复核/)
+    // 反向：真省略（连 to 都没有）时不是未识别。
+    expect(parseClauses(createPolicyStatement(renderMigrationSql(), "promotion_select_active")).unrecognized).toBe(false)
+  })
+
+  // R1 顺带封掉的另一个面：策略名里含字面量 `using (` 会把搜索窗口截断在真正的子句之前（复验 T2）。
+  it("R1：策略名含 using ( 时窗口不再被截断，同行 to 仍能解析出来", () => {
+    const statement = `create policy "promotion using (x)_select_active" on ${RLS_TARGET.qualified} for select to authenticated using (is_active = true);`
+    const clauses = parseClauses(statement)
+    expect(clauses.roles, "名字里的 using ( 不该让 to 子句隐形").toEqual(["authenticated"])
+    expect(clauses.unrecognized, "解析成功时不该标未识别").toBe(false)
+    // 改名这种工件仍然由名字集合相等与形状上限先拦下，不靠解析器。
+    const renamed = renderMigrationSql().replace('create policy "promotion_select_active"', 'create policy "promotion using (x)_select_active"')
+    expect(() => expectRlsSqlBlock(renamed)).toThrow(/上限之外的语句|名字集合必须与真源一致/)
   })
 
   // 不变量是双向的：渲染器写出与默认同义的显式子句时仍为绿（V4），写出不同的子句时红（V6/V7/V8）。
   it("V4：渲染器显式写出同义的 to public as permissive 时子句门禁仍为绿", () => {
     const explicit = withClause(renderMigrationSql(), "to public as permissive")
-    expect(parseClauses(createPolicyStatement(explicit, "promotion_select_active"))).toEqual({ roles: ["public"], permissive: true })
+    expect(parseClauses(createPolicyStatement(explicit, "promotion_select_active"))).toEqual({ roles: ["public"], permissive: true, unrecognized: false })
     expect(() => expectPolicyClauses(explicit)).not.toThrow()
+    expect(unexpectedStatements(explicit), "同义显式子句不该撞形状上限").toEqual([])
+  })
+
+  // R4（复验 T17）：分授落地时必然写出正宗的 Postgres 子句顺序。以前块识别与逐条 toContain 都以
+  // 字面 `on public.promotion for` 为锚，正宗顺序会把 8 项结构断言打红、被误读成"分授语义有问题"。
+  it("T17：工件与 §3.5 同时改写成正宗子句顺序时，结构断言与上限仍为绿", () => {
+    const canonical = withCanonicalClauseOrder(renderMigrationSql())
+    const block = withCanonicalClauseOrder(designRlsBlocks()[0])
+    expect(canonical, "夹具必须真的改写形状，否则这条用例空转").not.toBe(renderMigrationSql())
+    expect(block, "夹具必须真的改写形状，否则这条用例空转").not.toBe(designRlsBlocks()[0])
+    expect(isPromotionRlsBlock(block), "正宗子句顺序下 §3.5 的块仍要被识别").toBe(true)
+    expect(unexpectedStatements(canonical), "正宗子句顺序不该撞形状上限").toEqual([])
+    expect(() => expectRlsSqlStructure(canonical)).not.toThrow()
+    expect(() => expectRlsSqlStructure(block)).not.toThrow()
   })
 
   for (const mutation of CLAUSE_MUTATIONS) {
@@ -330,8 +490,13 @@ describe("promotion RLS 工件与真源一致", () => {
       const source = mutation.target === "design" ? designRlsBlocks()[0] : renderMigrationSql()
       const mutated = mutation.inline ? inlineClause(source, mutation.clause) : withClause(source, mutation.clause)
       expect(() => expectPolicyClauses(mutated), mutation.clause).toThrow(mutation.expectThrow)
+      // 子句写法的偏离同时被集合相等这一层报出：这一层不依赖解析器认不认得子句。
+      expect(() => expectRlsSqlShapes(mutated), mutation.clause).toThrow(/夹带了工件之外的语句/)
       // 只改 §3.5 时工件自己仍是绿的：证明报的是块与真源的分歧，不是块本身缺项。
-      if (mutation.target === "design") expect(() => expectPolicyClauses(renderMigrationSql())).not.toThrow()
+      if (mutation.target === "design") {
+        expect(() => expectPolicyClauses(renderMigrationSql())).not.toThrow()
+        expect(() => expectRlsSqlShapes(renderMigrationSql())).not.toThrow()
+      }
     })
   }
 
