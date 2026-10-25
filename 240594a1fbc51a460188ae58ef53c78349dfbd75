@@ -1,0 +1,30 @@
+scripts/verify-mcp.mjs
+  s_bded39028d1b84::t_db0df6160b9b69 1-388
+docs/mcp-acceptance.md
+  s_bded39028d1b84::t_023bd54cad15a6 1-20,35-48
+  s_bded39028d1b84::t_2f1124f76c1042 21-34
+.env.example
+  s_bded39028d1b84::t_1735f613da852f 41-46
+README.md
+  s_bded39028d1b84::t_5aaa5237b9f5dc 187
+  s_bded39028d1b84::t_1739e91f4ed110 71,89-131,174
+package.json
+  s_bded39028d1b84::t_1739e91f4ed110 14
+  s_bded39028d1b84::t_ffa91f6305f058 89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "240594a1fbc51a460188ae58ef53c78349dfbd75",
+  "prompts": {},
+  "sessions": {
+    "s_bded39028d1b84": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a17120-3a84-7d60-bff1-09de7650d77d",
+        "model": "gpt-6-luna"
+      },
+      "human_author": null
+    }
+  }
+}

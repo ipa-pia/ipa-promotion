@@ -1,0 +1,14 @@
+docs/mcp-design.md
+  h_6539c3a3cd32c4 1-579
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8fcacdc43a0a1ac5aebc2c206f1766df68d27d30",
+  "prompts": {},
+  "humans": {
+    "h_6539c3a3cd32c4": {
+      "author": "xdewx <present150608@sina.com>"
+    }
+  }
+}
