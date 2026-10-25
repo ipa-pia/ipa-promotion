@@ -489,6 +489,8 @@ export default defineEventHandler(async (event) => {
 | 会话客户端 | `createServerSupabaseClient(event)` | 现有 HTTP 管理接口继续使用，不动 |
 | 路由豁免 | core 的内置 `/.well-known`、`/oauth/consent` 豁免 | **不加进 `publicRoutes`** |
 
+**发布依赖依据**：`@nuxt-tmpl/nuxt@0.2.10` 的服务端鉴权中间件从 `@nuxt-tmpl/core@0.2.10` 调用 `isSafeRoute`；core 内置豁免 `/.well-known` 与 `/oauth/consent`，且 consent 页面本身声明为公开。虽然 `@ipa-schema/auth@1.0.0` 的客户端 `DEFAULT_PUBLIC_ROUTES` 只列出 `/__nuxt_error`，它不决定上述服务端路由是否放行。因此项目的 `publicRoutes` 只需限定为自行验证 Bearer token 的 `/api/v1/mcp`。
+
 ### 6.2 项目自建（模板未提供）
 
 | 文件 | 职责 |

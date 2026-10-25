@@ -4,23 +4,19 @@ import { existsSync } from "node:fs"
 import { once } from "node:events"
 import { resolve } from "node:path"
 import { createServer } from "node:net"
+import {
+  compareMcpToolSchemas,
+  confirmRecordDeleted,
+  createCheckReporter,
+  verifyWriteIsolationFlow,
+} from "./verify-mcp-helpers.mjs"
 
 const root = process.cwd()
 const missing = []
-let checks = 0
-let failures = 0
+const reporter = createCheckReporter()
+const { check } = reporter
 
 class CheckFailure extends Error {}
-
-function check(label, condition, detail = "") {
-  checks++
-  if (condition) {
-    console.log(`通过：${label}`)
-    return
-  }
-  failures++
-  console.error(`失败：${label}${detail ? `；${detail}` : ""}`)
-}
 
 function requireCheck(label, condition, detail = "") {
   check(label, condition, detail)
@@ -41,6 +37,9 @@ if (!existsSync(resolve(root, "node_modules/dotenv/config.js")) || !existsSync(r
 }
 
 // dotenv does not fail on a missing .env; the checks below can then give a useful message.
+if (!existsSync(resolve(root, ".env"))) {
+  console.error("MCP 验收提示：未找到 .env 文件；请复制 .env.example 为 .env 并补齐验收环境变量。")
+}
 await import("dotenv/config")
 
 const requiredVariables = [
@@ -213,7 +212,7 @@ let child
 let adminDb
 let userDb
 let fixtureId
-const rogueIds = []
+const rogueNames = []
 let fixtureName
 try {
   await verifyRlsPolicies()
@@ -279,7 +278,8 @@ try {
   await withMcpClient(endpoint, adminToken, async (client) => {
     const listedTools = await client.listTools()
     const expectedTools = ["list_promotions", "get_promotion", "create_promotion", "update_promotion", "delete_promotion", "set_promotion_active"]
-    requireCheck("MCP initialize/tools/list 返回定稿的六个工具", expectedTools.every(name => listedTools.tools.some(tool => tool.name === name)) && listedTools.tools.length === expectedTools.length)
+    const schemaErrors = compareMcpToolSchemas(listedTools.tools)
+    requireCheck("MCP initialize/tools/list 返回六个定稿工具及字段 schema", schemaErrors.length === 0, schemaErrors.join("; "))
 
     const marker = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     fixtureName = `MCP验收-${marker}`
@@ -320,16 +320,22 @@ try {
       const deniedDelete = await regularClient.callTool({ name: "delete_promotion", arguments: { id: fixtureId } })
       const deniedActive = await regularClient.callTool({ name: "set_promotion_active", arguments: { id: fixtureId, isActive: false } })
       requireCheck("普通用户四个写工具均返回 403", [deniedCreate, deniedUpdate, deniedDelete, deniedActive].every(result => result.isError === true && /403/.test(toolText(result))))
-      const unexpectedWrite = await adminDb.from("promotion").select("id").eq("name", `${fixtureName}-denied`)
-      rogueIds.push(...(unexpectedWrite.data ?? []).map(row => String(row.id)))
-
-      const directInsert = await userDb.from("promotion").insert({
-        name: `${fixtureName}-rls-denied`, url: "https://example.com/rls-denied", category: "other", description: "RLS 拒绝探针", is_active: false,
-      }).select("id").maybeSingle()
-      requireCheck("普通用户直连 PostgREST insert 被 RLS 拒绝", Boolean(directInsert.error) || !directInsert.data)
-      if (directInsert.data?.id) rogueIds.push(String(directInsert.data.id))
-      const directUpdate = await userDb.from("promotion").update({ name: `${fixtureName}-rls-tampered` }).eq("id", fixtureId).select("id").maybeSingle()
-      requireCheck("普通用户直连 PostgREST update 未修改记录", Boolean(directUpdate.error) || !directUpdate.data)
+      const rlsProbeName = `${fixtureName}-rls-denied`
+      const deniedCreateName = `${fixtureName}-denied`
+      rogueNames.push(deniedCreateName)
+      rogueNames.push(rlsProbeName)
+      await verifyWriteIsolationFlow({
+        check: requireCheck,
+        findUnexpectedCreate: () => adminDb.from("promotion").select("id").eq("name", deniedCreateName),
+        attemptRlsInsert: name => userDb.from("promotion").insert({
+          name, url: "https://example.com/rls-denied", category: "other", description: "RLS 拒绝探针", is_active: false,
+        }),
+        findRlsInsert: name => adminDb.from("promotion").select("id").eq("name", name),
+        attemptRlsUpdate: (id, name) => userDb.from("promotion").update({ name }).eq("id", id).select("id").maybeSingle(),
+        findFixture: id => adminDb.from("promotion").select("id,name,is_active").eq("id", id).maybeSingle(),
+        fixture: { id: fixtureId, name: fixtureName, is_active: true },
+        rlsProbeName,
+      })
     })
 
     const afterDeniedWrites = parseToolJson(await client.callTool({ name: "get_promotion", arguments: { id: fixtureId } }))
@@ -366,12 +372,21 @@ catch (error) {
 }
 finally {
   if (fixtureId && adminDb) {
-    const cleanup = await adminDb.from("promotion").delete().eq("id", fixtureId)
-    check("清理 MCP 临时验收记录", !cleanup.error, cleanup.error ? "Supabase 未接受管理员删除；请手动清理已下架的临时记录" : "")
+    const cleanup = await confirmRecordDeleted({
+      expectedId: fixtureId,
+      deleteRecord: async () => ({
+        ...(await adminDb.from("promotion").delete().eq("id", fixtureId).select("id").maybeSingle()),
+      }),
+      findRecord: async () => adminDb.from("promotion").select("id").eq("id", fixtureId).maybeSingle(),
+    })
+    check("清理 MCP 临时验收记录并确认已删除", cleanup.ok, cleanup.reason ?? "")
   }
-  for (const rogueId of rogueIds) {
-    const cleanup = await adminDb.from("promotion").delete().eq("id", rogueId)
-    check("清理权限拒绝探针意外写入的数据", !cleanup.error)
+  for (const rogueName of rogueNames) {
+    const cleanup = await confirmRecordDeleted({
+      deleteRecord: async () => adminDb.from("promotion").delete().eq("name", rogueName).select("id"),
+      findRecord: async () => adminDb.from("promotion").select("id").eq("name", rogueName),
+    })
+    check("清理意外验收记录并确认已删除", cleanup.ok, cleanup.reason ?? "")
   }
   if (child && child.exitCode === null) {
     child.kill("SIGTERM")
@@ -383,6 +398,6 @@ finally {
   }
 }
 
-console.log(`MCP 验收汇总：${checks - failures}/${checks} 项通过，${failures} 项失败。`)
-if (failures > 0) process.exit(1)
+console.log(`MCP 验收汇总：${reporter.checks - reporter.failures}/${reporter.checks} 项通过，${reporter.failures} 项失败。`)
+if (reporter.exitCode > 0) process.exit(reporter.exitCode)
 console.log("MCP 端到端验收通过。")
