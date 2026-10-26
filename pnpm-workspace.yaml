@@ -1,10 +1,10 @@
 packages:
   - "."
 overrides:
-  # Keep the companion template core aligned with nuxt; both registry 0.2.10
-  # releases were withdrawn after 0.2.11 became the published version.
-  "@nuxt-tmpl/nuxt": "0.2.11"
-  "@nuxt-tmpl/core": "0.2.11"
+  # Keep the companion template core aligned with nuxt: the two are released
+  # in lockstep, and a one-sided bump resolves the app against a mismatched pair.
+  "@nuxt-tmpl/nuxt": "0.2.12"
+  "@nuxt-tmpl/core": "0.2.12"
   "@ipa-vue/core": "0.3.13"
   "@ipa-vue/element-plus": "0.3.12"
   # The published UI package declares a monorepo-only peer that is not published
@@ -29,5 +29,3 @@ minimumReleaseAgeExclude:
   - "@nuxt-tmpl/*"
   - "@ipa-vue/*"
   - "@ipa-schema/*"
-patchedDependencies:
-  '@nuxt-tmpl/nuxt@0.2.11': patches/@nuxt-tmpl__nuxt@0.2.11.patch
