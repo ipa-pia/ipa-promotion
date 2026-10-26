@@ -1,0 +1,18 @@
+README.md
+  h_6539c3a3cd32c4 56,62,88,90-92
+server/utils/auth-routes.test.ts
+  h_6539c3a3cd32c4 4-7,10-56,83-86,90-91,95-131
+shared/utils/auth-routes.ts
+  h_6539c3a3cd32c4 1-7,12-19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e9747f41ed4f18d41cf9a04dbd0eaee0eb8dda30",
+  "prompts": {},
+  "humans": {
+    "h_6539c3a3cd32c4": {
+      "author": "xdewx <present150608@sina.com>"
+    }
+  }
+}
