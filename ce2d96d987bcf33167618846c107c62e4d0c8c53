@@ -1,0 +1,27 @@
+nuxt.config.ts
+  s_00d3c3a52cc65e::t_3a3ce3edfa7f74 10-16,21-26
+  s_00d3c3a52cc65e::t_5568a3a348fa23 19
+  s_00d3c3a52cc65e::t_9e57f67a76b974 17-18,20
+patches/@nuxt-tmpl__nuxt@0.2.10.patch
+  s_00d3c3a52cc65e::t_5c6b27beddfb0c 1-24
+pnpm-lock.yaml
+  s_00d3c3a52cc65e::t_dcfdc5505ba10b 16-18,49,9981
+pnpm-workspace.yaml
+  s_00d3c3a52cc65e::t_937dac0d7ec063 33-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ce2d96d987bcf33167618846c107c62e4d0c8c53",
+  "prompts": {},
+  "sessions": {
+    "s_00d3c3a52cc65e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1713c-e645-7e32-9cbf-bdec37e161a0",
+        "model": "gpt-6-luna"
+      },
+      "human_author": "xdewx <present150608@sina.com>"
+    }
+  }
+}

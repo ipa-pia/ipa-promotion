@@ -1,0 +1,19 @@
+docs/mcp-design.md
+  s_ff13474aea0027::t_17fb36aaeb4d07 7,21,46-47,51,53-55,58-59,493,536-538,563,606
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "04856648333d2bc94edb0e5c82fa3015b4b18497",
+  "prompts": {},
+  "sessions": {
+    "s_ff13474aea0027": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a17146-5ad3-75d2-b3ec-d781e8882fd1",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "xdewx <present150608@sina.com>"
+    }
+  }
+}

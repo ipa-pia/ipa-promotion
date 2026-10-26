@@ -1,0 +1,19 @@
+README.md
+  s_c9c4e7ce18bc34::t_30a71e4f0cefe9 87-89,189
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "623567ff55f44139d4adc5a684b416c00e8579f1",
+  "prompts": {},
+  "sessions": {
+    "s_c9c4e7ce18bc34": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a17239-4eab-7443-ab6e-f516da06b289",
+        "model": "gpt-6-luna"
+      },
+      "human_author": "xdewx <present150608@sina.com>"
+    }
+  }
+}
