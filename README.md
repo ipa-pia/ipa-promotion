@@ -53,13 +53,13 @@ pnpm dev
 
 ## MCP（Model Context Protocol）
 
-站点通过模板 `@nuxt-tmpl/nuxt@0.2.11`（配套 `@nuxt-tmpl/core@0.2.11`）暴露 MCP 相关能力（`nuxtTmpl.mcp.enabled: true`）。
+站点通过模板 `@nuxt-tmpl/nuxt@0.2.12`（配套 `@nuxt-tmpl/core@0.2.12`）暴露 MCP 相关能力（`nuxtTmpl.mcp.enabled: true`）。
 
 ### 硬前置条件
 
 - `NUXT_PUBLIC_AUTH_PROVIDER=supabase`：OAuth consent 页面需要 Supabase；0.2.11 的保护资源发现元数据注册不再依赖 provider，但本项目的 MCP 授权服务器仍是 Supabase。
 - `NUXT_PUBLIC_AUTH_PROVIDER` 是**构建期常量**（模板 setup 阶段读取）：改动后必须重新构建，不是运行时开关。
-- `@nuxt-tmpl/nuxt` 与 `@nuxt-tmpl/core` 必须保持同为 `0.2.11`；`@ipa-vue/core` 固定由 workspace override 提升至 `0.3.13`。发布包还含 `workspace:*` 依赖，`@ipa-schema/api` 的 override 是独立安装前置。
+- `@nuxt-tmpl/nuxt` 与 `@nuxt-tmpl/core` 必须保持同为 `0.2.12`；`@ipa-vue/core` 固定由 workspace override 提升至 `0.3.13`。发布包还含 `workspace:*` 依赖，`@ipa-schema/api` 的 override 是独立安装前置。
 - `nuxtTmpl.mcp.authEntries` 在单 issuer 配置下保持未设置（默认空值）；不要设置字符串 `"[]"`。本次仍按单 Supabase issuer 运作，不增加多入口或 token 验证配置。
 
 ### 模板复用边界
@@ -85,9 +85,11 @@ curl -i https://<host>/.well-known/oauth-protected-resource
 
 ### publicRoutes 放行说明
 
-`nuxtTmpl.auth.publicRoutes` 放行 `/api/v1/mcp` 与精确英文同意页别名 `re:^/en/oauth/consent/?$`。MCP 端点会自行验证 Bearer token；不要放行整个 `/api/v1`，否则同级 API 也会跳过模板的全局鉴权。模板按**路径段前缀**匹配普通字符串（`/a` 覆盖 `/a/x/y`）；`re:` 字符串使用正则匹配。
+`nuxtTmpl.auth.publicRoutes` 只放行项目专有的 `/api/v1/mcp`。MCP 端点会自行验证 Bearer token；不要放行整个 `/api/v1`，否则同级 API 也会跳过模板的全局鉴权。模板按**路径段前缀**匹配普通字符串（`/a` 覆盖 `/a/x/y`）；`re:` 字符串使用正则匹配。
 
-模板服务端与客户端都按原始 pathname 匹配，未自动剥离 i18n locale 前缀。默认路径 `/.well-known` 与 `/oauth/consent` 使用模板内置豁免；英文 consent 必须显式精确放行。首页、登录、注册和 dashboard 的英文路径在 `guestRoutes` 中复用既有 guest 策略：`re:^/en/?$`、`/en/sign-in`、`/en/sign-up`、`/en/dashboard`。首页必须用锚定正则，不能用普通字符串 `/en`，否则会把 `/en/private` 等路径一并放行。对应配置集中在 `shared/utils/auth-routes.ts`，回归测试同时检查模板服务端 `isSafeRoute` 和客户端 `getAuthMode`。
+0.2.12 起模板把最终页面表发布为 `runtimeConfig.public.nuxtTmpl.authPageRouting`：服务端先按原始路径匹配，再对表内已注册的本地化页面取其 canonical 路径复判 guest/public，客户端 `getAuthPageMode` 同口径。因此首页、登录、注册、dashboard 与同意页的英文路径**不再需要项目别名**，`shared/utils/auth-routes.ts` 只留 `/dashboard`（guest）与 `/api/v1/mcp`（public）。不在页面表内的路径（未知英文路径、`/api/**`、`.well-known`）不会被放宽，回归测试 `server/utils/auth-routes.test.ts` 同时检查模板服务端 `isSafeRoute` 与客户端 `getAuthMode`/`getAuthPageMode`。
+
+`/oauth/consent` 的放行不靠项目别名：同意页只在 `NUXT_PUBLIC_AUTH_PROVIDER=supabase` 时被注册（`dist/module.mjs:371-376`），客户端 public 属性来自页面自身的 `definePageMeta({ auth: "public" })`——换个 provider 就没有这条路由可放行；服务端由 `@nuxt-tmpl/core` 的内置豁免覆盖 `/oauth/consent`，英文同意页经模板别名表继承同一判定。注意模块里那句把 `/oauth/consent` 追加进 `publicRoutes` 的条件写入（`dist/module.mjs:379-381`）**不会出现在产物中**：Nitro 在 `pages:extend` 之前取走 runtimeConfig 副本，只有按引用挂上去的 `authPageRouting` 存活（实测构建的 `publicRoutes` 为 `["re:^/\\.well-known/oauth-protected-resource(/|$)", "/api/v1/mcp"]`）。不要用重新添加英文别名的方式"加固"同意页——那会在没有同意页的 provider 上放行一条不存在的路由。一处随别名删除而来的收窄：`/en/oauth/consent/`（带尾斜杠）不在模板注册的别名内，服务端不再对它免凭证；页面本身仍由 `definePageMeta` 放行。
 
 ### MCP 端点与认证
 
