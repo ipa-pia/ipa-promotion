@@ -1,11 +1,29 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
 import IconsResolver from 'unplugin-icons/resolver'
 import ViteComponents from 'unplugin-vue-components/vite'
+import { authGuestRoutes, authPublicRoutes } from './shared/utils/auth-routes'
 
 export default defineNuxtConfig({
   compatibilityDate: "2025-07-15",
   devtools: { enabled: true },
   ssr: false,
+
+  hooks: {
+    // @nuxt-tmpl/nuxt currently marks @ipa-vue/core external for all builds.
+    // That leaves an unresolvable bare import in browser chunks, so bundle it
+    // into the client while preserving the server's external configuration.
+    "vite:extendConfig"(config, { isClient }) {
+      if (!isClient) return;
+
+      const rollupOptions = config.build?.rollupOptions;
+      const external = rollupOptions?.external;
+      if (rollupOptions && Array.isArray(external)) {
+        rollupOptions.external = external.filter(
+          (entry) => entry !== "@ipa-vue/core",
+        );
+      }
+    },
+  },
 
   ...(process.env.NUXT_PUBLIC_AUTH_PROVIDER === "clerk"
       ? {
@@ -116,7 +134,21 @@ export default defineNuxtConfig({
     auth: {
       enabled: true,
       afterSignInRoute: "/dashboard",
-      guestRoutes: ["/dashboard"],
+      guestRoutes: authGuestRoutes,
+      // MCP 使用 Bearer Token 自行鉴权，因此只豁免该端点，避免同级 API 跳过全局鉴权。
+      // 模板按「路径段前缀」匹配（/a 覆盖 /a/x/y，/ 只匹配根）。
+      // 英文 locale 需要显式映射模板的 consent 默认豁免；使用精确正则避免放行子路径。
+      publicRoutes: authPublicRoutes,
+    },
+    mcp: {
+      // 模板默认 mcp.enabled: false，必须显式打开，否则发现元数据不会注册（静默 404）。
+      // Consent 仍需要 supabase provider；protected-resource metadata 在 0.2.11
+      // 已不再依赖 provider。本项目授权服务器仍保持单一 Supabase issuer。
+      enabled: true,
+      // 模板默认按 `${NUXT_PUBLIC_SUPABASE_URL} origin + /auth/v1` 推导 issuer。
+      // 若部署到 Supabase 子路径或非 Supabase 授权服务器，需显式覆盖，
+      // 否则严格客户端会在 RFC 8414 §3.3 判定 Issuer mismatch。
+      // authorizationServer: "https://<project>.supabase.co/auth/v1",
     },
     translator: {
       enabled: true,

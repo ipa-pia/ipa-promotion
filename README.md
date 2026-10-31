@@ -51,6 +51,94 @@ pnpm dev
 | `supabase` | Supabase Auth | [Supabase Docs](https://supabase.com/docs) |
 | 留空 | 禁用认证 | - |
 
+## MCP（Model Context Protocol）
+
+站点通过模板 `@nuxt-tmpl/nuxt@0.2.12`（配套 `@nuxt-tmpl/core@0.2.12`）暴露 MCP 相关能力（`nuxtTmpl.mcp.enabled: true`）。
+
+### 硬前置条件
+
+- `NUXT_PUBLIC_AUTH_PROVIDER=supabase`：OAuth consent 页面需要 Supabase；0.2.11 的保护资源发现元数据注册不再依赖 provider，但本项目的 MCP 授权服务器仍是 Supabase。
+- `NUXT_PUBLIC_AUTH_PROVIDER` 是**构建期常量**（模板 setup 阶段读取）：改动后必须重新构建，不是运行时开关。
+- `@nuxt-tmpl/nuxt` 与 `@nuxt-tmpl/core` 必须保持同为 `0.2.12`；`@ipa-vue/core` 固定由 workspace override 提升至 `0.3.13`。发布包还含 `workspace:*` 依赖，`@ipa-schema/api` 的 override 是独立安装前置。
+- `nuxtTmpl.mcp.authEntries` 在单 issuer 配置下保持未设置（默认空值）；不要设置字符串 `"[]"`。本次仍按单 Supabase issuer 运作，不增加多入口或 token 验证配置。
+
+### 模板复用边界
+
+| 部分 | 归属 | 说明 |
+|---|---|---|
+| `/.well-known/oauth-protected-resource`（RFC 9728 发现元数据） | **模板** | `nuxtTmpl.mcp.enabled: true` 时自动注册，不再依赖 auth provider；禁止自建 |
+| `/oauth/consent` 同意页 | **模板** | `runtime/pages/oauth/consent.vue` + `DefaultOAuthConsent.vue` 自动注册，仍依赖 Supabase provider；禁止在 `app/pages/` 下自建同名页（会顶掉模板实现）；定制样式走 `useAuthForms({ OAuthConsentForm })` 包装，不要从零重写 |
+| OAuth issuer 推导 | **模板** | 默认 `authorization_servers[0] = <NUXT_PUBLIC_SUPABASE_URL origin>/auth/v1`；非 Supabase 授权服务器用 `nuxtTmpl.mcp.authorizationServer` 显式覆盖 |
+| `/api/v1/mcp` MCP 端点与工具面 | **项目自建** | Streamable HTTP 无状态端点与六个推广链接工具（见 `docs/mcp-design.md`） |
+
+### 发现端点用法（客户端注意）
+
+`resource` 字段由**请求路径后缀**推导：客户端应请求带后缀的发现路径，让 `resource` 与实际 MCP 端点对齐：
+
+```bash
+# ✅ 正确：resource = <origin>/api/v1/mcp
+curl -i https://<host>/.well-known/oauth-protected-resource/api/v1/mcp
+
+# ❌ 错误：不带后缀 → resource = <origin>/，指向错误
+curl -i https://<host>/.well-known/oauth-protected-resource
+```
+
+### publicRoutes 放行说明
+
+`nuxtTmpl.auth.publicRoutes` 只放行项目专有的 `/api/v1/mcp`。MCP 端点会自行验证 Bearer token；不要放行整个 `/api/v1`，否则同级 API 也会跳过模板的全局鉴权。模板按**路径段前缀**匹配普通字符串（`/a` 覆盖 `/a/x/y`）；`re:` 字符串使用正则匹配。
+
+0.2.12 起模板把最终页面表发布为 `runtimeConfig.public.nuxtTmpl.authPageRouting`：服务端先按原始路径匹配，再对表内已注册的本地化页面取其 canonical 路径复判 guest/public，客户端 `getAuthPageMode` 同口径。因此首页、登录、注册、dashboard 与同意页的英文路径**不再需要项目别名**，`shared/utils/auth-routes.ts` 只留 `/dashboard`（guest）与 `/api/v1/mcp`（public）。不在页面表内的路径（未知英文路径、`/api/**`、`.well-known`）不会被放宽，回归测试 `server/utils/auth-routes.test.ts` 同时检查模板服务端 `isSafeRoute` 与客户端 `getAuthMode`/`getAuthPageMode`。
+
+`/oauth/consent` 的放行不靠项目别名：同意页只在 `NUXT_PUBLIC_AUTH_PROVIDER=supabase` 时被注册（`dist/module.mjs:371-376`），客户端 public 属性来自页面自身的 `definePageMeta({ auth: "public" })`——换个 provider 就没有这条路由可放行；服务端由 `@nuxt-tmpl/core` 的内置豁免覆盖 `/oauth/consent`，英文同意页经模板别名表继承同一判定。注意模块里那句把 `/oauth/consent` 追加进 `publicRoutes` 的条件写入（`dist/module.mjs:379-381`）**不会出现在产物中**：Nitro 在 `pages:extend` 之前取走 runtimeConfig 副本，只有按引用挂上去的 `authPageRouting` 存活（实测构建的 `publicRoutes` 为 `["re:^/\\.well-known/oauth-protected-resource(/|$)", "/api/v1/mcp"]`）。不要用重新添加英文别名的方式"加固"同意页——那会在没有同意页的 provider 上放行一条不存在的路由。一处随别名删除而来的收窄：`/en/oauth/consent/`（带尾斜杠）不在模板注册的别名内，服务端不再对它免凭证；页面本身仍由 `definePageMeta` 放行。
+
+### MCP 端点与认证
+
+- 端点：`POST /api/v1/mcp`，使用 Streamable HTTP，无状态并返回 JSON；每次请求都要提供 `Authorization: Bearer <Supabase OAuth access token>`。
+- 读工具允许任意**已认证**用户；写工具只允许 `app_metadata.role === "admin"`。拒绝访问时读工具仍在工具列表中，调用写工具会返回 403。管理员角色取自 Supabase `app_metadata`，不能用用户可修改的 `user_metadata` 或 OAuth scope 代替。
+- 首次连接由 MCP 客户端按 OAuth Protected Resource Metadata 发现流程，从带端点后缀的发现地址开始授权：`https://<host>/.well-known/oauth-protected-resource/api/v1/mcp`。在 `/oauth/consent` 完成模板提供的授权页流程后，客户端应自动在 MCP 请求中附带 access token；不要把 token 写入源码、日志或提交到仓库。
+- OAuth token 必须属于当前 Supabase 项目；管理员测试 token 的 `app_metadata.role` 必须为 `admin`，普通用户测试 token 则不能为 `admin`。OAuth 是否能签发包含该 claim 的 token 是上线前置验证。
+
+### 工具清单
+
+| 工具 | 用途 | 权限 |
+|---|---|---|
+| `list_promotions` | 分页列出推广链接；`includeInactive` 仅管理员可用 | 已认证；查看下架项需管理员 |
+| `get_promotion` | 按 ID 读取推广链接；普通用户读取下架记录返回 404 | 已认证 |
+| `create_promotion` | 创建推广链接 | 管理员 |
+| `update_promotion` | 更新推广链接字段 | 管理员 |
+| `delete_promotion` | 软下架推广链接（置 `is_active=false`） | 管理员 |
+| `set_promotion_active` | 启用或停用推广链接 | 管理员 |
+
+工具参数与 HTTP API 共用 `shared/contracts/promotion.ts` 的 Zod 契约，数据访问直接使用调用者的 Supabase token 并由 RLS 约束，不通过 HTTP 自调用。OAuth/RFC 9728 发现、同意页 UI 和 issuer 推导属于模板；MCP server、工具与推广业务数据访问属于本项目。
+
+### 本地构建与验收
+
+```bash
+pnpm install --frozen-lockfile
+cp .env.example .env
+# 在 .env 中配置 Supabase URL/anon key，以及下方验收所需的真实 OAuth 凭据和只读数据库连接。
+pnpm typecheck:supabase
+NUXT_PUBLIC_AUTH_PROVIDER=supabase pnpm build
+pnpm test:mcp
+```
+
+`pnpm typecheck:supabase` 会以 `NUXT_PUBLIC_AUTH_PROVIDER=supabase` 先重跑 `nuxt prepare` 再做类型检查。当 `.nuxt` 里的类型不是以 supabase provider 生成时，裸跑 `pnpm typecheck` 会报 `TS2305: Module '"#imports"' has no exported member 'useSupabaseClient'`（`.nuxt` 完全缺失时报的是 `TS5083: Cannot read file .../tsconfig.*.json`）——那是构建期常量缺失，不是代码回归。反过来，只要本地已有一次 provider 正确的 `.nuxt`，裸跑 `pnpm typecheck` 也会通过，所以别把"通过"当成环境配置正确的证据；CI 与新克隆用这条脚本。
+
+`pnpm test:mcp` 只连接本地编译产物，不会自动获取 OAuth token、创建 Supabase 项目或替代数据库。它会真实调用 Auth、PostgREST 和 MCP 端点，并创建后清理一条带随机标记的验收记录。完整运行需要在 `.env` 提供：
+
+| 变量 | 用途 |
+|---|---|
+| `NUXT_PUBLIC_SUPABASE_URL` | 目标 Supabase 项目 URL |
+| `NUXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon/publishable key |
+| `MCP_TEST_ADMIN_ACCESS_TOKEN` | 真实 OAuth 管理员 access token（`app_metadata.role=admin`） |
+| `MCP_TEST_USER_ACCESS_TOKEN` | 真实 OAuth 普通用户 access token（非管理员） |
+| `MCP_TEST_ADMIN_SESSION_COOKIE` | 管理员已登录浏览器会话的完整 Cookie header，用于与 `GET /api/promotion` 对照 |
+| `MCP_TEST_DATABASE_URL` | 指向同一目标库的只读 PostgreSQL 连接，用于核验 RLS 开关与策略；需可读 `pg_class` / `pg_policies` |
+
+缺少变量、依赖或 `.output/server/index.mjs` 时脚本会打印中文缺项并以非零状态退出；缺少条件不算通过。运行前需确保目标库已准备好测试写入权限，脚本执行期间不要并行清理带 `MCP验收-` 前缀的临时记录。脚本不会打印 token、Cookie 或数据库连接串。检查范围及未验证门禁见 `docs/mcp-acceptance.md`。
+
+`promotion` 表的 RLS 三条策略（`promotion_select_active` / `promotion_select_admin` / `promotion_write_admin`）以 `scripts/rls-policy-spec.mjs` 为唯一真源，生成幂等的 `supabase/migrations/20261026000000_promotion_rls.sql`，脚本的 RLS 断言也读同一真源：逐条比对策略名、`cmd`、`roles`、`permissive`，并把 `using`/`with check` 规范化（去空白、`::text`、`promotion.` 限定符与分组括号）后与工件整串相等比对；恒真判据、`user_metadata`/`raw_user_meta_data` 判据、缺 `with check`、`qual` 为空、未登记的额外策略都会判失败，写法等价但形状不同的手工策略也会判失败并列出原始值等你人工复核。`roles` 多出的角色在工件已授 `public`（角色全集）时按「等价冗余」转人工复核，缺角色才是真实收窄；未登记策略的报错会按它的 `permissive` 说清叠加方向是放宽还是收窄。工件不写 `to`/`as`，所以期望钉在 `public` + permissive（由 `pnpm test` 的「to/as 生效语义」用例把关：子句在语句内部解析，解析出来就与真源期望做集合相等，确实省略才按 Postgres 默认补 `public` + permissive，而 head 里明明有 `to` 却没解析出角色集时判"未识别形状，需人工复核"、**不补默认值**（补了就会把"授了别的角色只是形状没被认出来"放成静默绿灯）；`docs/mcp-design.md` §3.5 的 SQL 块与工件受的是同一组门禁——测试里**冻结的语句形状上限**（绝对上限，不从渲染器取，渲染器被改动加进 `delete from` / `disable row level security` / 换拼法的 `revoke usage` 都会红）加上与真源渲染结果的语句集合相等，结构断言一律子句顺序无关，且上限的子句段要求**至少写出一条**——Postgres 省略 `FOR` 的缺省是 `FOR ALL`（不是 `SELECT`），只读策略漏写 `for select` 等于开出写面，而结构断言也按这个真实缺省判定，所以这层安全由判定给出、不靠量化符的意外）；真要按角色分授，得连 `renderPolicySql()` 一起改，属于发版前的设计变更。**分授落地前必须先有这条子句解析**：在子句解析门禁合入之前，只改工件侧的 `to`/`as` 而期望不动是只有连上真实库才暴露的漏洞（尤其 `for select to authenticated` 写成同一行，行首锚定的探测会当成"省略"从而整条门禁空转），子句解析加上同形回归夹具才是拦住它的东西。**`to public` 覆盖此后新建的任何角色**：`PUBLIC` 是角色全集，含以后 `create role` 出来的角色，它们不需要任何授权动作就落进这三条公开读策略；`service_role` 另有 `BYPASSRLS`、不受策略约束，所以"新角色没被 grant 过自然兜得住"在 PostgREST 路径上看似成立、语义上并不等价。要排除未来角色只有分授，而这个取舍必须在执行工件之前定——事后改要重放。**仓库里有工件不等于目标库已执行**：执行到共享 Supabase 库属于共享环境变更，需要单独批准；执行前先跑只读核验，核对现有策略是否与这三条重复或冲突（工件不删除未登记策略）。
+
 ## 数据库配置
 
 本分支默认使用 PostgreSQL（部署适配 Vercel）。在 Vercel 项目中配置：
@@ -93,6 +181,7 @@ BETTER_AUTH_SECRET=<your-secret>
 | `pnpm lint` | 代码检查 |
 | `pnpm lint:fix` | 自动修复 |
 | `pnpm test` | 运行测试 |
+| `pnpm test:mcp` | 使用官方 MCP SDK 对生产构建产物进行真实 OAuth / 数据库验收 |
 | `pnpm prisma:generate` | 生成 Prisma Client |
 | `pnpm prisma:migrate` | 运行数据库迁移 |
 | `pnpm prisma:studio` | 打开 Prisma Studio |

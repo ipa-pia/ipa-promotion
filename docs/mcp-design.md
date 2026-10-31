@@ -3,7 +3,7 @@
 > 状态：**已定稿**（产品决策已确认 2026-10-24，见 §0.1）
 > 关联 issue：LEOK-14（总纲）· LEOK-16（本方案）
 > 参照实现：`ipa-changelog` 的 IPA-80（工具面）/ IPA-86（一切以模板为准）
-> 核实基线：`@nuxt-tmpl/nuxt@0.2.10` 与 `@nuxt-tmpl/core@0.2.10`（npm tarball 已解包逐行核对）、本仓库 HEAD `f14c9f2`
+> 核实基线：`@nuxt-tmpl/nuxt@0.2.11` 与 `@nuxt-tmpl/core@0.2.11`（npm 发布产物已核对）、本仓库 MCP 分支
 > 性质：**方案文档，不含业务实现代码**。阶段 2/3 按本文落点实现。
 
 ---
@@ -17,7 +17,7 @@
 | **D3** | 管理员判定 | **单一真源**：`isAdminUser(user)` ≡ `user?.app_metadata?.role === "admin"`（全仓唯一出现处）。会话 cookie 与 Bearer token 只是"身份获取方式"不同，判定逻辑与 401/403 映射完全共用 |
 | **D4** | 契约层 | **引入** `shared/contracts/promotion.ts`（zod v4）为唯一真源。`parsePromotionForm*` 改为委托该契约，HTTP API 与 MCP 工具入参同源 |
 | **D5** | 端点与传输 | `POST /api/v1/mcp`，Streamable HTTP **无状态**（`sessionIdGenerator: undefined` + `enableJsonResponse: true`），`GET`/`DELETE` 返回 405 |
-| **D6** | 模板复用边界 | **不自建**发现元数据路由、**不自建** `/oauth/consent` 页面、**不自研** OAuth/AS。`/.well-known` 与 `/oauth/consent` **无需**进 `publicRoutes`（core 0.2.10 内置豁免），只有 `/api/v1` 需要放行 |
+| **D6** | 模板复用边界 | **不自建**发现元数据路由、**不自建** `/oauth/consent` 页面、**不自研** OAuth/AS。默认语言的 `/.well-known` 与 `/oauth/consent` 使用 core 内置豁免；i18n 英文 consent 需精确加入 `publicRoutes`。MCP 仅放行 `/api/v1/mcp`，不放行整个 `/api/v1` |
 | **D7** | 机器凭据 | **不做** App Token / machine credential 体系（本项目只有 Supabase 用户身份，复制 ipa-changelog 的机器写入是另一个产品特性） |
 | **D8** | 数据访问 | 走**调用者 token** 的 Supabase 客户端（模板自带的 `createTokenSupabaseClient`），不经 HTTP 自调用；应用层可见性规则为权威，RLS 为纵深防御 |
 | **D9** | RLS | **约定启用**（产品决策 2026-10-24）。`promotion` 表启用 RLS，策略见 §3.5；应用层判定**不因此放松**，两者是"DB 层 + 应用层"双闸 |
@@ -34,26 +34,26 @@
 
 ## 1. 已核实事实
 
-### 1.1 模板复用面（`@nuxt-tmpl/nuxt@0.2.10`，已解包核对）
+### 1.1 模板复用面（`@nuxt-tmpl/nuxt@0.2.11`，发布产物已核对）
 
 | 能力 | 产物 | 结论 |
 |---|---|---|
-| RFC 9728 发现元数据 | `runtime/server/handlers/oauth-protected-resource.js` | 注册 `/.well-known/oauth-protected-resource` 与 `/.well-known/oauth-protected-resource/**`；**仅在 provider = `supabase` 时**注册 |
+| RFC 9728 发现元数据 | `runtime/server/handlers/oauth-protected-resource.js` | 注册 `/.well-known/oauth-protected-resource` 与 `/.well-known/oauth-protected-resource/**`；0.2.11 起不依赖 auth provider |
 | OAuth 同意页 | `runtime/pages/oauth/consent.vue` + `runtime/components/oauth/DefaultOAuthConsent.vue` | provider = `supabase` 且项目未自建同名页时自动注册；UI 可用 `useAuthForms({ OAuthConsentForm })` 替换 |
 | Bearer 客户端 | `runtime/server/utils/supabase.js` → `createTokenSupabaseClient(token)` | 模板已提供，MCP 鉴权与数据访问直接复用 |
 | 响应解包 | `runtime/server/utils/api-response.js` → `skipResponseWrap(event)` | 模板已提供，用于绕过 `apiResponse` 插件的信封包裹 |
-| 路由豁免清单 | `@nuxt-tmpl/core@0.2.10` → `isSafeRoute()` | 内置豁免 `["/__nuxt_error", "/oauth/consent", "/.well-known", "/authorize", "/token"]` |
+| 路由豁免清单 | `@nuxt-tmpl/core@0.2.11` → `isSafeRoute()` | 内置豁免 `["/__nuxt_error", "/oauth/consent", "/.well-known", "/authorize", "/token"]` |
 
 ### 1.2 本次复核对既有侦察结论的**修正**（重要）
 
-《mcp-recon.md》与父 issue 的"关键前置事实 3"写的是"**MCP 端点与发现元数据路径都必须加进 `nuxtTmpl.auth.publicRoutes`**"。逐行核对 `@nuxt-tmpl/core@0.2.10` 后，结论需要修正：
+《mcp-recon.md》与父 issue 的"关键前置事实 3"写的是"**MCP 端点与发现元数据路径都必须加进 `nuxtTmpl.auth.publicRoutes`**"。逐行核对 `@nuxt-tmpl/core@0.2.11` 后，结论需要修正：
 
-1. **`/.well-known` 与 `/oauth/consent` 无需显式放行**。core 的 `isSafeRoute(path, guestRoutes, publicRoutes)` 内部恒定并入内置豁免清单，命中即放行；`publicRoutes` 只在配置了 `/api/v1` 时才起作用。
-   → 阶段 2 的 `nuxt.config.ts` 改动只有一处：`publicRoutes` 增加 `/api/v1`。
+1. **默认语言的 `/.well-known` 与 `/oauth/consent` 无需显式放行**。core 的 `isSafeRoute(path, guestRoutes, publicRoutes)` 内部恒定并入原始路径的内置豁免清单；它不会去除 i18n locale 前缀。MCP 端点需单独配置在 `publicRoutes`，且路径前缀应限定为 `/api/v1/mcp`，避免同级 API 跳过全局鉴权；英文 consent 需精确别名 `re:^/en/oauth/consent/?$`。
+   → `guestRoutes` 为英文首页、登录、注册和 dashboard 补齐与默认路径等价的别名；英文首页使用锚定正则 `re:^/en/?$`，避免放行 `/en` 下其他路径。
 2. **`nuxtTmpl.mcp.enabled` 的默认值是 `false`**（`module.mjs` 的 `defaults` 里 `mcp: { enabled: false }`，注册条件是 `options.mcp?.enabled !== false`）。
    → 必须显式写 `mcp: { enabled: true }`，否则发现元数据**根本不会出现**。
-3. **core 必须与 nuxt 同版本升级**。豁免清单在 **core** 里；registry 上 `@nuxt-tmpl/core` 现存版本同样只有 `0.2.10`（`0.2.1` 已 404 下架）。
-   → 阶段 1 的版本修复必须同时覆盖 `@nuxt-tmpl/nuxt` 与 `@nuxt-tmpl/core`，否则会出现"nuxt 是 0.2.10、core 是 0.2.1"的混搭，`/.well-known` 可能不再豁免。
+3. **core 必须与 nuxt 同版本升级**。豁免清单在 **core** 里；当前项目将两者固定为 `0.2.11`，避免 runtime 与 core 行为错配。
+   → 版本升级必须同时覆盖 `@nuxt-tmpl/nuxt` 与 `@nuxt-tmpl/core`；workspace override 也必须保持一致。
 4. **发现元数据的 `resource` 由请求路径后缀决定**。模板 handler：`suffix = pathname.replace(/^\/\.well-known\/oauth-protected-resource/, "")`，`resource = origin + (suffix || "/")`。
    → 客户端应请求 `/.well-known/oauth-protected-resource/api/v1/mcp`，才能拿到 `resource = <origin>/api/v1/mcp`（与实际端点对齐）。请求不带后缀会拿到 `resource = <origin>/`，**指向错误**。
 5. **模板的 auth guard 用的是 `user_metadata.role`**（`runtime/server/guards/supabase.js`），客户端可改、不可用于鉴权。本项目继续以 `app_metadata.role` 为准，**两者不可混用**。
@@ -262,27 +262,45 @@ sequenceDiagram
 
 **为什么 MCP 路径能命中策略**：MCP 数据访问走 `createTokenSupabaseClient(token)`（D8），请求携带**调用者的 JWT**；PostgREST 据此填充 `auth.jwt()`，RLS 按**调用者身份**生效——与 HTTP 管理接口走会话 cookie 的效果等价。
 
-**`promotion` 表需要的最小策略集**（Supabase 控制台手工执行；仓库内无 migration，见 R13）：
+**`promotion` 表需要的最小策略集**（已固化为仓库工件 `supabase/migrations/20261026000000_promotion_rls.sql`；**真源是 `scripts/rls-policy-spec.mjs`**，工件与 `verify-mcp.mjs` 的断言都由它生成，漂移由 `pnpm test` 拦下）：
 
 ```sql
+-- public.promotion 的 RLS 策略（幂等：可重复执行，结果一致）
+begin;
+
 alter table public.promotion enable row level security;
 
 -- 读：公开读已上架的（网站匿名读 + 任意已认证用户的 MCP 读都命中这条）
+drop policy if exists "promotion_select_active" on public.promotion;
 create policy "promotion_select_active"
   on public.promotion for select
   using (is_active = true);
 
--- 读：管理员可读全部（含已下架）
+-- 读：管理员可读全部（含已下架），缺失时 includeInactive=true 会静默返回空集
+drop policy if exists "promotion_select_admin" on public.promotion;
 create policy "promotion_select_admin"
   on public.promotion for select
   using (auth.jwt() -> 'app_metadata' ->> 'role' = 'admin');
 
 -- 写：仅管理员（insert/update/delete）
+drop policy if exists "promotion_write_admin" on public.promotion;
 create policy "promotion_write_admin"
   on public.promotion for all
   using (auth.jwt() -> 'app_metadata' ->> 'role' = 'admin')
   with check (auth.jwt() -> 'app_metadata' ->> 'role' = 'admin');
+
+commit;
 ```
+
+`begin;`/`commit;` 是必要的：逐句自动提交时，若在 `drop policy "promotion_select_active"` 之后失败，会留下"RLS 已开、公开读策略缺失"的静默零行状态。
+
+**工件 ≠ 已上线**：该文件只是期望状态的版本化载体，本仓库的任何脚本都不会连接或执行到共享 Supabase 库。执行需要 leoking 逐次批准，**且"核对现有策略是否与这三条重复/冲突"是执行的前置条件而不是收尾项**——工件只按名字覆盖这三条，从不删除其它策略；手工执行过的库里若另有未登记策略（或同义但异名的策略），重放"成功"之后 RLS 仍是这些策略与三条叠加的状态：`permissive` 的与三条 OR 叠加（放宽），`restrictive` 的再与之 AND 叠加（收窄），两个方向都可能出错，只有 `verify-mcp.mjs` 的漂移断言会把它报出来——断言按未登记行的 `permissive` 取值算方向，不无条件写"放宽"。只读核验查询同样来自真源（`rlsVerificationQueries()`），`pnpm test:mcp` 会在连接数据库的第一步就按它比对，策略名、`cmd`、`roles`、`permissive`、`using`/`with check` 任一与工件不是同一形状都会列出原始值。
+
+**本节 SQL 块的门禁方式：冻结的形状上限 + 与真源的语句集合相等。** 上限写在测试里、字面量自行冻结（**不从渲染器取**），每条语句整句匹配，工件与 §3.5 两块都受它约束——若上限由被约束的渲染器提供，就退化成自比对本体：复验实测渲染器被加上 `delete from` / `disable row level security` / 换拼法的 `revoke usage` 后整套测试全绿，所以 #15 起的"绝对上限"必须保留在工件侧——#17 把它落成不随渲染器改变、字面量自行冻结的形状上限（复验 R2），不再是逐关键词的黑名单。集合相等再补一层，封住"§3.5 相对工件夹带或漏掉任何一条语句"：`drop table` / `owner to` / `truncate` / `create role` / `set role` / `grant` / `revoke` / `force row level security` 都在此列，不必逐个关键词追——真正的风险面是操作员照本节手工复制执行，黑名单永远追不上新写法。两条门禁的**结构断言都按子句顺序无关**实现（复验 R4）：分授真要落地时写出的正宗 `as permissive for select to …` 形状不该把结构断言打红、被误读成"分授语义有问题"。上限的子句段要求**至少写出一条**，这是刻意的：Postgres 省略 `FOR` 的缺省是 **`FOR ALL`**（官方文档：`ALL is the default.`），把只读策略的 `for select` 抹掉等于当场给它开出写面——但这份安全**不靠那个量化符**：结构断言按 Postgres 的真实缺省把没有 `FOR` 的写法判成 `all` 并与真源比对，所以有人照旧注释把子句段放宽成可选时，红会由判定本体报出而不是静默通过（复验第 2 节的收尾项）。手工照本节复制执行时请整段复制，不要"顺手"省略子句。
+
+**为什么 `roles` 钉成 `{public}`**：工件的 `create policy` 不写 `to`/`as`，Postgres 的隐含语义就是 `to public as permissive`，所以 `roles` 期望只能是 `public`（`pg_policies.roles` 渲染为 `{public}`）。这是与省略写法**唯一自洽**的取值，不是说按角色分授不可行。真要分授（例如把公开读拆成 `anon` + `authenticated`）属于发版前的设计变更：必须同时改 `renderPolicySql()` 显式渲染 `to`/`as`、同步本节 SQL 块与真源的期望集，并由 `pnpm test` 里的「to/as 生效语义」用例把关——子句在语句内部解析（不做行首锚定、也不依赖 `FOR` 一定存在），解析出来就与真源期望做**集合相等**比对；确实省略才按 Postgres 默认补成 `public` + permissive；**head 里有 `to` 却没解析出角色集时判"未识别形状，需人工复核"，不补默认值**——因为缺省恰好等于期望时，"授了别的角色只是形状没被认出来"会变成静默绿灯。两个方向的暴露点不对称，按实测写：**只改真源的期望（工件不动）本地就红**，补齐后的默认值与期望直接比对，不需要连库；过去只有连上真实库才暴露的是**只改工件侧的 `to`/`as` 而期望不动**——尤其把 `to authenticated` 与 `for select` 写成同一行时，行首锚定的探测会当成"省略"从而整条用例空转。这类漏现在由子句解析 + 集合相等拦下，`to public, promotion_superuser`、同行 `to authenticated`、`as restrictive` 都已进回归夹具，本节的 SQL 块也走同一份检查。**所以分授改动必须在执行工件之前定，且必须先完成这条子句解析门禁**——在它合入之前，同一行书写的 `to authenticated` 能全绿通过整套测试，把只读公开范围悄悄收窄。
+
+**`to public` 含此后新建的任何角色（这是产品取舍，不是实现细节）**：`PUBLIC` 是角色全集，覆盖当前**与未来**的所有角色。选了"不分授"，就意味着今后 `create role` 出来的任何角色**不需要任何授权动作**自动落入这三条公开读策略；反过来，`service_role` 带 `BYPASSRLS`、根本不受策略约束，所以"新角色没被 grant 过、自然兜得住"这种想法在 PostgREST 路径上看似成立、语义上并不等价。要排除未来角色只有分授一条路，而那是一次渲染器 + §3.5 + 期望集同改的设计变更。**这个取舍必须在执行工件之前定**：事后改要重放，事后也没有任何"未登记的宽策略"会被自动清掉（工件只按名字覆盖这三条）。
 
 **策略缺失/不匹配的两种典型故障（都要在验收里覆盖）**
 
@@ -487,7 +505,9 @@ export default defineEventHandler(async (event) => {
 | Bearer 客户端 | `createTokenSupabaseClient(token)` | MCP 鉴权与数据访问直接调用 |
 | 响应解包 | `skipResponseWrap(event)` | MCP 端点入口调用 |
 | 会话客户端 | `createServerSupabaseClient(event)` | 现有 HTTP 管理接口继续使用，不动 |
-| 路由豁免 | core 的内置 `/.well-known`、`/oauth/consent` 豁免 | **不加进 `publicRoutes`** |
+| 路由豁免 | core 对原始路径内置 `/.well-known`、`/oauth/consent` 豁免 | 默认路径**不加进** `publicRoutes`；英文 consent 需精确别名 `re:^/en/oauth/consent/?$` |
+
+**发布依赖依据**：`@nuxt-tmpl/nuxt@0.2.11` 的服务端鉴权中间件从配套 `@nuxt-tmpl/core@0.2.11` 调用 `isSafeRoute`；core 对原始路径内置豁免 `/.well-known` 与 `/oauth/consent`。英文 consent 带 `/en` 前缀，不命中该内置项，故项目为其增加锚定的 `re:^/en/oauth/consent/?$` public 别名。客户端 `getAuthMode` 使用相同路由配置；`shared/utils/auth-routes.ts` 的回归用例同时检查两端，并确认未知英文路径与业务 API 仍为 required/非 safe。
 
 ### 6.2 项目自建（模板未提供）
 
@@ -529,11 +549,11 @@ export default defineEventHandler(async (event) => {
 +    publicRoutes: [
 +      // MCP 端点走 Bearer Token 鉴权，不走会话 cookie；
 +      // 不放行会被模板「默认拒绝」中间件按未登录 401 拦掉。
-+      "/api/v1",
++      "/api/v1/mcp",
 +    ],
    },
 +  mcp: {
-+    // 打开后模板注册 /.well-known/oauth-protected-resource（仅 supabase provider）。
++    // 打开后模板注册 /.well-known/oauth-protected-resource；consent 页面仍需 supabase provider。
 +    // 默认值是 false，必须显式打开。
 +    enabled: true,
 +  },
@@ -549,22 +569,22 @@ export default defineEventHandler(async (event) => {
 
 | # | 等级 | 风险 | 影响 | 缓解 / 归属 |
 |---|---|---|---|---|
-| **R1** | **P0** | **RLS 策略未落地 / 漂移**（产品已约定启用 RLS，但策略在 Supabase 手工执行、仓库内无 migration、无 CI 校验） | ① 缺写策略 → admin 的 MCP 写工具全部失败（fail-closed，不脏数据，但功能不可用）；② 缺 admin 读策略 → `includeInactive=true` **静默返回空集**；③ 策略被写宽（如 `using (true)`）→ anon 可读全部行、退化为无 RLS | ① 落地 §3.5 的三条策略；② 应用层 `assertAdmin` **保留不放松**（策略写宽时的最后闸门）；③ 非 admin 读在数据访问层**强制**过滤 `is_active = true`；④ 验收脚本断言 A7/A8（含 admin 分支）+ 断言 `pg_class.relrowsecurity = true` |
+| **R1** | **P0** | **RLS 策略未落地 / 漂移**（产品已约定启用 RLS；策略已入库为 `supabase/migrations/20261026000000_promotion_rls.sql`，但目标库是否执行过仍需只读核验，执行需 leoking 批准） | ① 缺写策略 → admin 的 MCP 写工具全部失败（fail-closed，不脏数据，但功能不可用）；② 缺 admin 读策略 → `includeInactive=true` **静默返回空集**；③ 策略被写宽（如 `using (true)`）→ anon 可读全部行、退化为无 RLS | ① 按 §3.5 工件上线三条策略（执行需批准，上线前先跑只读核验确认现状）；② 应用层 `assertAdmin` **保留不放松**（策略写宽时的最后闸门）；③ 非 admin 读在数据访问层**强制**过滤 `is_active = true`；④ 验收脚本断言 A7/A8（含 admin 分支）+ 断言 `pg_class.relrowsecurity = true`；⑤ 断言与工件同源（`scripts/rls-policy-spec.mjs`），③ 类"写宽"按规范化后的**整串相等**判定（含 `roles`/`permissive`），`user_metadata`/`raw_user_meta_data` 判据会被显式判失败，工件与真源的漂移由 `pnpm test` 拦下 |
 | **R2** | **P0（硬门禁）** | **Supabase OAuth 签发的 access token 的 claims 假设**：本方案假定其 `app_metadata` 含 `role`、且 `iss`/`aud` 与会话 token 一致 | 若 OAuth token 不带 `app_metadata` → 管理员判定恒为 false；**RLS 启用后影响更大**：`auth.jwt() -> 'app_metadata' ->> 'role'` 取不到 admin → RLS 写策略同样拒绝，MCP 写入**全线不可用**（fail-closed） | 阶段 3 验收脚本必须用**真实 OAuth 流程**取 token 并断言 `app_metadata.role === "admin"` 可判定（A11，**列为 MCP 上线前的硬门禁**）。若不成立 → 管理员判定需改为服务端查库（service role 读 `auth.users.raw_app_meta_data`），届时需单独立项 |
 | **R3** | P1 | **audience 未绑定 MCP resource**：Supabase OAuth 服务端可能忽略 RFC 8707 的 `resource` 参数，token 的 `aud` 只能是 `authenticated` | 为其它资源签发的 token 可能被重放到 MCP 端点 | 以 `iss` + `aud === "authenticated"` + 服务端 `getUser` 校验作为等效强度；记录为已知残留风险，接受 |
 | **R4** | P1 | **OAuth 同意页只授予 OIDC scope**（`openid/email/profile/phone`），无业务 scope | 不能用 scope 做业务鉴权 | 已定案：权限判定只用 `app_metadata.role`；写进 README 与工具描述 |
-| **R5** | P1 | **模板 MCP 能力强绑定 supabase provider**：`NUXT_PUBLIC_AUTH_PROVIDER != supabase` 时发现元数据与同意页都不出现 | 换 provider = MCP 发现链路整体失效 | 部署环境固化 provider=supabase；README 与 `.env.example` 写明；验收脚本断言发现元数据存在 |
-| **R6** | P1 | **模板版本混搭**：`nuxt` 与 `core` 版本不一致时，豁免清单与发现元数据行为可能不一致（`/.well-known` 不再豁免 → 被默认拒绝中间件 401） | 发现元数据 401，客户端拿不到 AS | 阶段 1 **同时**把 `@nuxt-tmpl/nuxt` 与 `@nuxt-tmpl/core` 固定为 `0.2.10`（registry 上两者都只有 0.2.10） |
+| **R5** | P1 | **Consent 页面依赖 Supabase provider**：保护资源元数据在 0.2.11 已不再受 provider 条件限制，但同意页仍依赖 Supabase | provider 未设为 supabase 时 consent 流程不可用 | 部署环境固化 provider=supabase；README 写明；真实 OAuth 验收 |
+| **R6** | P1 | **模板版本混搭**：`nuxt` 与 `core` 版本不一致时，豁免清单与发现元数据行为可能不一致 | 路由豁免或 discovery 行为不一致 | package direct pin 与 workspace override 同步固定 `@nuxt-tmpl/nuxt` / `@nuxt-tmpl/core` 为 `0.2.11` |
 | **R7** | P1 | **apiResponse / api-error-handler 包裹 JSON-RPC 响应** | 客户端收到 `{code,data,message}` 而非 JSON-RPC，MCP 握手失败 | 端点入口 `skipResponseWrap(event)` + 用 h3 的 `defineEventHandler`（**不用** `defineApiHandler`）+ 错误一律返回 Response |
 | **R8** | P1 | **公开读 + AI 写 = 垃圾内容/提示注入风险**：MCP 客户端可能被诱导写入垃圾推广链接或钓鱼 URL | 站点公信力受损、可能有害用户 | 建议增加人工复核或域名白名单（**本期不做**，列入 §8 遗留项） |
 | **R9** | P2 | **写路径无并发控制**：`PATCH` 无乐观锁，HTTP 管理台与 MCP 同时改同一条会互相覆盖 | 数据丢失 | 本期沿用现状；建议后续引入 `updated_at` 乐观锁（MCP 是高并发写入方，收益更大） |
 | **R10** | P2 | **无速率限制**：MCP 端点公开可达，写工具可被滥用（刷库） | 资源滥用 | 建议在网关/反代层加限流；本期不做 |
 | **R11** | P2 | **URL 缺少协议/格式强校验**（现状只要求非空） | 坏数据入库 | 契约层已收紧为"归一化后必须 http(s) 绝对地址"（B7/B8）；`coverUrl` 因支持 base64 保留宽松 |
 | **R12** | P2 | **契约严格化导致 HTTP API 行为收紧**（B1–B8） | 依赖宽松兜底的第三方调用方会收到 400 | **产品已确认采纳**（2026-10-24）；前端不受影响；建议在 README 记录 |
-| **R13** | P2 | **promotion 表 schema 与 RLS 策略不在仓库内**（Supabase 手工建表 / 手工执行策略），id 类型 / 字段长度 / 策略内容无从静态校验 | 契约的 `id` / 长度上限可能与真实表不符；RLS 策略可能与 §3.5 不一致 | 阶段 2 开工前先 `information_schema` + `pg_policies` 核对一次，把 id 类型与实际策略回填本文件 §4.2 / §3.5 |
+| **R13** | P2 | **promotion 表 schema 与 RLS 策略不在仓库内**（Supabase 手工建表 / 手工执行策略），id 类型 / 字段长度 / 策略内容无从静态校验 | 契约的 `id` / 长度上限可能与真实表不符；RLS 策略可能与 §3.5 不一致 | **策略部分已消除**：§3.5 的策略集已固化为 `supabase/migrations/20261026000000_promotion_rls.sql`（真源 `scripts/rls-policy-spec.mjs`），`verify-mcp.mjs` 的 RLS 断言与只读核验查询同源，漂移由 `pnpm test` 拦下；**上线仍需 leoking 批准执行**。**表结构部分未消除**：id 类型 / 字段长度仍需对真实库 `information_schema` 核对一次并回填 §4.2 |
 | **R14** | P3 | **每次 MCP 请求多一次 Auth 往返**（`getUser`） | 延迟 + Auth 配额 | 与 HTTP 管理接口同量级；可接受。后续可加短 TTL 缓存 |
 | **R15** | P3 | **`promotion.id` 类型未确认** | 契约里先按宽松 string 处理 | 若为 uuid → 收紧 `z.uuid()`（zod v4） |
-| **R16** | P3 | **RLS 策略与 `promotion` 表结构均无版本化载体**（无 migration / 无 schema 文件） | 表结构或策略变更只能靠人肉同步，容易与本文件脱节 | 本期接受；建议后续把 `promotion` 表的 schema + 策略纳入 `supabase/migrations`（本仓库目前没有该目录），使变更可评审、可回滚 |
+| **R16** | P3 | **RLS 策略与 `promotion` 表结构均无版本化载体**（无 migration / 无 schema 文件） | 表结构或策略变更只能靠人肉同步，容易与本文件脱节 | **策略部分本期已解决**：新增 `supabase/migrations/` 目录，策略以 Supabase CLI Migration 约定入库（`<ts>_<name>.sql`，执行走 `scripts/supabase db push`，需批准），评审与回滚有载体；真源仍是 `scripts/rls-policy-spec.mjs`，工件为生成物。**表结构（建表 DDL）仍未纳入**，见 §8.1 第 5 项 |
 
 ---
 
@@ -577,7 +597,7 @@ export default defineEventHandler(async (event) => {
 | **D3** | 引入 `shared/contracts/promotion.ts`（zod v4），`parsePromotionForm*` 转调 | 客户端 JSON Schema 与服务端校验同源，杜绝文档漂移 | 保持手写 parser + MCP 侧另写 zod（= 两套规则）；手写 JSON Schema（= 第二套规则） |
 | **D4** | 契约严格化（拒绝而非静默兜底） | 严格契约才能生成有意义的 JSON Schema；宽松语义是手写代码的意外产物，非业务约定。**产品决策 2026-10-24："契约严格些好" → 已确认** | 保留宽松（则 MCP 与 HTTP 校验必然分叉）**—— 已否决** |
 | **D5** | `POST /api/v1/mcp` + Streamable HTTP 无状态 + JSON 响应 | serverless 约束；与参照项目一致，便于对照验收 | SSE 长连接 / 有状态会话（需会话存储与清理） |
-| **D6** | 不自建发现元数据路由与同意页 | 模板给了绝不自建（IPA-86 原则）；自建同意页会**顶掉**模板实现 | 自建兜底（0.2.10 已修正 0.2.9 的 issuer bug，无需兜底） |
+| **D6** | 不自建发现元数据路由与同意页 | 模板给了绝不自建（IPA-86 原则）；自建同意页会**顶掉**模板实现 | 自建兜底（当前模板已修正 issuer 推导问题，无需兜底） |
 | **D7** | 不做 App Token / scope 体系 | 本项目只有 Supabase 用户身份；机器写入是另一个产品特性 | 复制 `ipa-changelog` 的 machine token + security definer 方案（工作量与风险都不成比例） |
 | **D8** | 数据访问走调用者 token 客户端，不经 HTTP 自调用 | RLS 对调用者身份生效；无自调用延迟与递归风险 | HTTP 自调用到 `/api/promotion/*`（多一跳，且需要 cookie 转发） |
 | **D9** | 约定启用 RLS；应用层判定保留为权威闸门 | 双闸门：RLS 挡住"策略写宽"类失误，应用层挡住"漏判"类失误；两层判据统一为 `app_metadata.role` | 只靠 RLS（策略写宽即失守）/ 只靠应用层（RLS 未落地即失守）—— 两者都不单独采用 |
@@ -588,7 +608,7 @@ export default defineEventHandler(async (event) => {
 2. **写路径乐观锁**（R9）。
 3. **MCP 端点限流**（R10）。
 4. **封面上传的 MCP 工具化**（multipart 传输，生态支持差）。
-5. **`promotion` 表 schema + RLS 策略版本化**（纳入 `supabase/migrations`，R16）。
+5. **`promotion` 表 schema 版本化**（纳入 `supabase/migrations`，R16）—— **RLS 策略部分本期已完成**（`20261026000000_promotion_rls.sql`，真源 `scripts/rls-policy-spec.mjs`）；仍缺建表 DDL 与列类型/长度。
 
 ---
 
@@ -597,17 +617,20 @@ export default defineEventHandler(async (event) => {
 ### 阶段 2 · 模板 MCP 能力接入
 
 - [ ] `nuxt.config.ts`：`mcp: { enabled: true }`
-- [ ] `nuxt.config.ts`：`auth.publicRoutes` 增加 `/api/v1`（**只加这一条**；`/.well-known`、`/oauth/consent` 由 core 内置豁免）
+- [ ] `nuxt.config.ts`：`auth.publicRoutes` 精确配置 `/api/v1/mcp` 与 `re:^/en/oauth/consent/?$`；保留默认路径 `/.well-known`、`/oauth/consent` 的 core 内置豁免，英文 guest aliases 见 `shared/utils/auth-routes.ts`
 - [ ] 确认部署环境 `NUXT_PUBLIC_AUTH_PROVIDER=supabase`
-- [ ] 确认 `@nuxt-tmpl/nuxt` 与 `@nuxt-tmpl/core` 同为 `0.2.10`（阶段 1 成果，R6）
+- [x] `@nuxt-tmpl/nuxt` 与 `@nuxt-tmpl/core` 同为 `0.2.11`，direct pin 和 workspace override 对齐
 
-### 阶段 2 · RLS 策略落地（Supabase 手工执行，见 §3.5）
+### 阶段 2 · RLS 策略落地（工件已入库；执行到目标库需 leoking 批准，见 §3.5）
 
-- [ ] `alter table public.promotion enable row level security;`
-- [ ] `promotion_select_active`（公开读已上架）
-- [ ] `promotion_select_admin`（管理员读全部）
-- [ ] `promotion_write_admin`（管理员写）
-- [ ] 核对现有策略与上述三条是否重复/冲突（策略是 OR 叠加的，冗余策略不会报错但会掩盖缺失）
+- [x] 策略集与只读核验查询入库：真源 `scripts/rls-policy-spec.mjs` → 工件 `supabase/migrations/20261026000000_promotion_rls.sql`（幂等，可重复执行）
+- [x] `alter table public.promotion enable row level security;`
+- [x] `promotion_select_active`（公开读已上架）
+- [x] `promotion_select_admin`（管理员读全部）
+- [x] `promotion_write_admin`（管理员写）
+- [ ] **执行前置**：用只读连接（`MCP_TEST_DATABASE_URL`）核对现有策略与上述三条是否重复/冲突（策略是叠加的，冗余策略不会报错但会掩盖缺失；工件从不删除未登记策略，重放"成功"后 RLS 仍可能是未登记策略与三条叠加的放宽或收窄态）；`verify-mcp.mjs` 会把未登记的额外策略判成漂移，并列出该行的 `cmd`/`permissive`/`roles`/`qual` 原文与叠加方向。**别用"新角色没被 grant 过所以自然兜住"代替核验**：工件不写 `to` 就是 `to public`，`PUBLIC` 覆盖此后 `create role` 出来的任何角色，新角色无需任何授权动作即落入三条公开读策略；`service_role` 另有 `BYPASSRLS`，不受策略约束
+- [ ] **执行前置（若决定按角色分授）**：先确认 §3.5 的 `to`/`as` 子句解析门禁已在 `feat/mcp` 上生效（#16 起：子句在语句内部解析、与真源期望做集合相等，head 里有 `to` 却没解析出来时判"未识别形状"而不是补 `public`）。在这条门禁合入之前，`for select to authenticated` 写成同一行会被当成"省略 to"、整套 `pnpm test` 仍全绿，而目标库的公开读已被悄悄收窄。真要落地分授，同改的是三处：`renderPolicySql()` 显式渲染 `to`/`as` + 本节 SQL 块 + 真源的期望角色集；结构断言与形状上限已按子句顺序无关实现，不需要跟着改（复验 R4）
+- [ ] 用同一只读连接确认目标库现状，再决定是否需要执行工件——手工执行过且与工件同形的库不必重放
 - [ ] 把实际策略快照回填本文件 §3.5
 
 ### 阶段 2 · MCP server + 工具面 + 数据访问层
@@ -644,5 +667,5 @@ export default defineEventHandler(async (event) => {
 | A10 | `GET`/`DELETE /api/v1/mcp` → 405 且带 `Allow: POST` |
 | A11 | **R2 硬门禁**：真实 OAuth 流程拿到的 token 能把 admin 判定为 admin（非 admin 用户判定为非 admin）；且该 token 的 `app_metadata` 在 RLS 侧同样生效（写入成功即证明） |
 | A12 | MCP 响应体是 JSON-RPC（`jsonrpc`/`id`/`result`），**不是** `{code,data,message}` 信封（R7） |
-| A13 | **RLS 已启用**：`select relrowsecurity from pg_class where relname = 'promotion'` 为 `t`，且 `pg_policies` 中存在 §3.5 的三条策略 |
+| A13 | **RLS 已启用**：`select relrowsecurity from pg_class where relname = 'promotion'` 为 `t`，且 `pg_policies` 中存在 §3.5 的三条策略——核验查询与断言同源（`scripts/rls-policy-spec.mjs` → `verify-mcp.mjs` 的 `evaluateRlsState()`）。逐条比对策略名、`cmd`、`roles`（工件不带 `to`，隐含 `to public`，`pg_policies.roles` 渲染为 `{public}`）、`permissive`（工件不带 `as`，隐含 `as permissive`），并把 `using`/`with check` 规范化后（去空白、去 `::text`、去 `promotion.` 限定符、只剥分组括号、保留 `jwt()` 调用括号）与工件**整串相等**比对；恒真判据、`user_metadata`/`raw_user_meta_data` 判据、缺 `with check`、只读策略多带 `with check`、`qual` 为空、未登记的额外策略都判失败。`roles` 分三种不符：缺少工件要求的角色是真实**收窄**（这些角色命中不到该策略，`roles` 空数组即此种）；多出的角色在工件已授 `public`（角色全集）时是**等价冗余**，判失败并标记"未识别形状·等价冗余·需人工复核"；工件没授 `public` 而库里是 `public` 时是授权面**扩大**（不是收窄）。缺少与多出两类不符会同时报出，不会命中第一条就返回。未登记策略的报错附该行 `cmd`/`permissive`/`roles`/`qual` 原文，叠加方向由 `permissive` 算出（permissive＝放宽、restrictive＝收窄、两者并存＝两个方向同时存在）。等价但写法不同的手工表达式（如 `using (is_active)`、`<> 'notadmin'`、`IN ('admin', …)`、`判据 OR (true)`）会被判失败并列原始 `qual`/`with_check`/`roles`/`permissive` 全文、标记"未识别形状，需人工复核"——门禁的错向是"把正确库报成不合规"，不是"把写宽库放成绿灯"。§3.5 的 SQL 块与工件的守护也不再靠关键字：块内语句集合必须**等于** `renderPolicySql()`/`renderMigrationSql()` 渲染出的集合，且每条 `create policy` 的 `to`/`as` 子句在语句内部解析后与真源期望做集合相等（解析不出按 Postgres 默认补 `public` + permissive），同形等价声明（`to public as permissive`）判绿、任何偏离生效角色集或叠加方式的写法判红 |
 | A14 | **非 admin 写隔离**：用非 admin 的真实 OAuth token 直连 PostgREST 尝试 insert/update → 被 RLS 拒绝（DB 层闸门也生效，不只是应用层 403） |
