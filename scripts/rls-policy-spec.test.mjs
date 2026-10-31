@@ -19,6 +19,15 @@ const verifierPath = fileURLToPath(new URL("./verify-mcp.mjs", import.meta.url))
 const policyNames = RLS_POLICIES.map(policy => policy.name).sort()
 const ADMIN_EXPRESSION = "((auth.jwt() -> 'app_metadata' ->> 'role'::text) = 'admin'::text)"
 
+// PostgreSQL 15.8 的 pg_policies 原始形状（实测本地 supabase-db 15.8，与工件逐条同形）：
+//   - `permissive` 列从 boolean 变成 text（'PERMISSIVE' / 'RESTRICTIVE'）；
+//   - `auth.jwt()` 在 search_path 命中 auth 的情况下 deparse 成 `jwt()`，并补 `::text` 与分组括号。
+// 这两种形状是 **deparse 差异**而不是语义差异，判定器必须认得；但认得的方式只能是"归一化后整串相等"，
+// 不能是子串/词元匹配——反向验证见下面「语义等价但形状不同」的 G1–G4。
+const PG15_ADMIN_EXPRESSION = "(((jwt() -> 'app_metadata'::text) ->> 'role'::text) = 'admin'::text)"
+const PG15_PERMISSIVE = "PERMISSIVE"
+const PG15_RESTRICTIVE = "RESTRICTIVE"
+
 // Postgres 的子句缺省：`create policy` 不写 `to` 即授 PUBLIC（角色全集），不写 `as` 即 PERMISSIVE。
 // 这是数据库语义，不是真源的期望值——真源的期望与它是否自洽由 expectPolicyClauses 比对。
 const DEFAULT_ROLE = "public"
@@ -58,6 +67,17 @@ function writeRow() {
 
 function committedRows() {
   return [selectActiveRow(), adminRow("promotion_select_admin"), writeRow()]
+}
+
+// PostgreSQL 15.8 的 pg_policies 三行原始形状（实测本地 supabase-db 15.8）：
+// permissive 是文本 'PERMISSIVE'，qual 里 auth.jwt() 已被 deparse 成 jwt()。
+// 这份夹具是 LEOK-30 的回归锚点：判定器认不认这两种形状，决定了门禁在 PG 15+ 上是永远红还是能跑通。
+function pg15Rows() {
+  return [
+    { policyname: "promotion_select_active", cmd: "SELECT", qual: "(is_active = true)", with_check: null, roles: "{public}", permissive: PG15_PERMISSIVE },
+    { policyname: "promotion_select_admin", cmd: "SELECT", qual: PG15_ADMIN_EXPRESSION, with_check: null, roles: "{public}", permissive: PG15_PERMISSIVE },
+    { policyname: "promotion_write_admin", cmd: "ALL", qual: PG15_ADMIN_EXPRESSION, with_check: PG15_ADMIN_EXPRESSION, roles: "{public}", permissive: PG15_PERMISSIVE },
+  ]
 }
 
 function evaluateWith(mutations) {
@@ -745,6 +765,129 @@ describe("verify-mcp 的 RLS 断言只认真源", () => {
     const verifier = readFileSync(verifierPath, "utf8")
     expect(verifier).toContain("evaluateRlsState")
     for (const policy of RLS_POLICIES) expect(verifier, policy.name).not.toContain(`"${policy.name}"`)
+  })
+})
+
+// LEOK-30：RLS 验收门禁在 PostgreSQL ≥ 15 上永远无法通过——校验器读不懂目标库的返回形状。
+// 两处形状假设：`pg_policies.permissive` 的列类型（boolean → text）、`auth.jwt()` 被 deparse 成 `jwt()`。
+// 这一组用例把两种形状钉成回归锚点，同时用反向验证证明"读形状"没有变成"放宽判据"。
+describe("PostgreSQL 15+ 的 pg_policies 返回形状（LEOK-30）", () => {
+  it("PG 15 实测形状（permissive 文本 + auth.jwt() 已被 deparse）整套断言全绿", () => {
+    const checks = evaluateRlsState({ rlsEnabled: true, policies: pg15Rows() })
+    expect(checks.filter(check => !check.ok)).toEqual([])
+    expect(checks.map(check => check.label)).toEqual([
+      "promotion 表存在且已启用 RLS",
+      ...RLS_POLICIES.map(policy => policy.label),
+      "目标库策略集合与仓库工件一致（无未登记的额外策略）",
+    ])
+  })
+
+  it("PG 15 的 permissive 文本形状大小写不敏感（小写 permissive 同样认）", () => {
+    const rows = pg15Rows().map(row => ({ ...row, permissive: "permissive" }))
+    expect(evaluateRlsState({ rlsEnabled: true, policies: rows }).filter(check => !check.ok)).toEqual([])
+  })
+
+  it("PG 15 的 permissive 文本形状与 PG ≤ 14 的 boolean 形状判出同一个结论", () => {
+    const textRows = pg15Rows()
+    const boolRows = pg15Rows().map(row => ({ ...row, permissive: true }))
+    const textChecks = evaluateRlsState({ rlsEnabled: true, policies: textRows })
+    const boolChecks = evaluateRlsState({ rlsEnabled: true, policies: boolRows })
+    expect(textChecks.map(check => check.ok)).toEqual(boolChecks.map(check => check.ok))
+    expect(textChecks.filter(check => !check.ok)).toEqual([])
+  })
+
+  it("permissive 认不出的形状不猜方向：报未识别而不是当成 permissive 放行", () => {
+    for (const shape of ["YES", "1", null, undefined]) {
+      const rows = pg15Rows().map(row => ({ ...row, permissive: shape }))
+      const checks = evaluateRlsState({ rlsEnabled: true, policies: rows })
+      const failed = checks.filter(check => !check.ok)
+      expect(failed.length, shape).toBeGreaterThan(0)
+      for (const check of failed) expect(check.detail, shape).toContain("permissive 取值未识别")
+    }
+  })
+
+  // 反向验证一：PG 15 文本形状下写成 restrictive 必须红，并报出"工件要求 as permissive"。
+  it("反向验证：PG 15 的 RESTRICTIVE 文本形状必须失败并报出「工件要求 as permissive」", () => {
+    const rows = pg15Rows().map(row => row.policyname === "promotion_write_admin" ? { ...row, permissive: PG15_RESTRICTIVE } : row)
+    const check = writeAdminCheck(evaluateRlsState({ rlsEnabled: true, policies: rows }))
+    expect(check.ok, check.detail).toBe(false)
+    expect(check.detail).toContain("restrictive")
+    expect(check.detail).toContain("工件要求 as permissive")
+  })
+
+  // 反向验证一的 PG ≤ 14 对照：boolean false 与文本 'RESTRICTIVE' 判出同一个结论。
+  it("反向验证：PG ≤ 14 的 boolean false 与 PG 15 的 RESTRICTIVE 文本判出同一个结论", () => {
+    const boolCheck = writeAdminCheck(evaluateWith({ promotion_write_admin: { permissive: false } }))
+    const textCheck = writeAdminCheck(evaluateRlsState({
+      rlsEnabled: true,
+      policies: pg15Rows().map(row => row.policyname === "promotion_write_admin" ? { ...row, permissive: PG15_RESTRICTIVE } : row),
+    }))
+    expect(boolCheck.ok, boolCheck.detail).toBe(false)
+    expect(textCheck.ok, textCheck.detail).toBe(false)
+    expect(textCheck.detail).toContain("工件要求 as permissive")
+  })
+
+  // auth.jwt() → jwt() 的归一化只改**一个**已知 token，不做子串/词元匹配。
+  it("jwt() 的归一化是窄的：别的 schema 的 jwt() 不被当成 auth.jwt()", () => {
+    for (const schema of ["pg", "public", "myapp"]) {
+      const rows = pg15Rows().map(row => row.policyname === "promotion_select_admin"
+        ? { ...row, qual: `(((${schema}.jwt() -> 'app_metadata'::text) ->> 'role'::text) = 'admin'::text)` }
+        : row)
+      const check = selectAdminCheck(evaluateRlsState({ rlsEnabled: true, policies: rows }))
+      expect(check.ok, `${schema}.jwt()：${check.detail}`).toBe(false)
+      expect(check.detail).toContain("未识别形状")
+    }
+  })
+
+  // 反向验证二：归一化之后仍然必须是**整串相等**比对。
+  //
+  // 夹具形状的选择：分组括号是 deparse 差异（PG 15 实测 qual 自带三层括号），归一化必须吸收它，
+  // 所以"只叠一层括号"这种改写在归一化后与工件逐字相同，判不出差异——它不是有效的反向验证夹具，
+  // 拿它当验收夹具会把"括号被吸收"误读成"门禁放水"。有效的反向验证必须落在**词元**上：
+  // 下面 G1–G4 都是语义等价但写法不同（IN / <> / OR(false) / AND(true)），G3、G4 还在 PG 15 形状之外
+  // 再叠了一层括号。任何"包含 admin 就算过"的子串/词元匹配都会放过它们。
+  const PG15_EQUIVALENT_BUT_DIFFERENT = [
+    { id: "G1", description: "IN ('admin', 'service') 写法", qual: "(((jwt() -> 'app_metadata'::text) ->> 'role'::text) IN ('admin'::text, 'service'::text))" },
+    { id: "G2", description: "<> 'notadmin' 写法（四个词元都在）", qual: "(((jwt() -> 'app_metadata'::text) ->> 'role'::text) <> 'notadmin'::text)" },
+    { id: "G3", description: "OR (false) 写法（恒等，且比 PG 15 形状多叠一层括号）", qual: "((((jwt() -> 'app_metadata'::text) ->> 'role'::text) = 'admin'::text) OR (false))" },
+    { id: "G4", description: "AND (true) 写法（恒等，且比 PG 15 形状多叠一层括号）", qual: "((((jwt() -> 'app_metadata'::text) ->> 'role'::text) = 'admin'::text) AND (true))" },
+  ]
+
+  for (const { id, description, qual } of PG15_EQUIVALENT_BUT_DIFFERENT) {
+    it(`反向验证 ${id}：${description} 仍必须判失败（证明归一化没有变成子串匹配）`, () => {
+      const rows = pg15Rows().map(row => row.policyname === "promotion_select_admin" ? { ...row, qual } : row)
+      const check = selectAdminCheck(evaluateRlsState({ rlsEnabled: true, policies: rows }))
+      expect(check.ok, check.detail).toBe(false)
+      expect(check.detail).toContain("未识别形状")
+      expect(check.detail).toContain(qual)
+    })
+  }
+
+  // 恒真表达式仍然必须被识别（写宽成放行）——PG 15 形状下也不能漏。
+  it("PG 15 形状下恒真表达式仍然被识别为写宽", () => {
+    const rows = pg15Rows().map(row => row.policyname === "promotion_select_admin" ? { ...row, qual: "true" } : row)
+    const check = selectAdminCheck(evaluateRlsState({ rlsEnabled: true, policies: rows }))
+    expect(check.ok, check.detail).toBe(false)
+    expect(check.detail).toContain("恒真")
+  })
+
+  // 未登记策略的方向判定在 PG 15 文本形状下仍然成立（只数 `=== true` / `=== false` 会恒为 0）。
+  it("PG 15 文本形状下未登记 permissive 策略的方向报放宽", () => {
+    const rows = [...pg15Rows(), { policyname: "legacy_wide_read", cmd: "SELECT", qual: "true", with_check: null, roles: "{public}", permissive: PG15_PERMISSIVE }]
+    const check = evaluateRlsState({ rlsEnabled: true, policies: rows }).at(-1)
+    expect(check.ok).toBe(false)
+    expect(check.detail).toContain("legacy_wide_read")
+    expect(check.detail).toContain("方向是放宽")
+    expect(check.detail).not.toContain("permissive 取值未识别")
+  })
+
+  it("PG 15 文本形状下未登记 restrictive 策略的方向报收窄", () => {
+    const rows = [...pg15Rows(), { policyname: "legacy_narrow_read", cmd: "SELECT", qual: "false", with_check: null, roles: "{public}", permissive: PG15_RESTRICTIVE }]
+    const check = evaluateRlsState({ rlsEnabled: true, policies: rows }).at(-1)
+    expect(check.ok).toBe(false)
+    expect(check.detail).toContain("legacy_narrow_read")
+    expect(check.detail).toContain("方向是收窄")
+    expect(check.detail).not.toContain("方向是放宽")
   })
 })
 
