@@ -6,7 +6,10 @@ overrides:
   "@nuxt-tmpl/nuxt": "0.2.12"
   "@nuxt-tmpl/core": "0.2.12"
   "@ipa-vue/core": "0.3.13"
-  "@ipa-vue/element-plus": "0.3.12"
+  # 0.3.12 was unpublished; 0.3.13 is the only version on the registry. Nothing
+  # here depends on this package today, but the override must point at a
+  # resolvable version so a clean install cannot fail at the tarball stage.
+  "@ipa-vue/element-plus": "0.3.13"
   # The published UI package declares a monorepo-only peer that is not published
   # to the registry at all and is unused here, so drop the peer requirement.
   "@ipa-vue/element-plus>@ipa-schema/ai": "-"
