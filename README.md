@@ -57,7 +57,7 @@ pnpm dev
 
 ### 硬前置条件
 
-- `NUXT_PUBLIC_AUTH_PROVIDER=supabase`：OAuth consent 页面需要 Supabase；0.2.11 的保护资源发现元数据注册不再依赖 provider，但本项目的 MCP 授权服务器仍是 Supabase。
+- `NUXT_PUBLIC_AUTH_PROVIDER=supabase`：OAuth consent 页面需要 Supabase；0.2.12 的保护资源发现元数据注册不再依赖 provider，但本项目的 MCP 授权服务器仍是 Supabase。
 - `NUXT_PUBLIC_AUTH_PROVIDER` 是**构建期常量**（模板 setup 阶段读取）：改动后必须重新构建，不是运行时开关。
 - `@nuxt-tmpl/nuxt` 与 `@nuxt-tmpl/core` 必须保持同为 `0.2.12`；`@ipa-vue/core` 固定由 workspace override 提升至 `0.3.13`。发布包还含 `workspace:*` 依赖，`@ipa-schema/api` 的 override 是独立安装前置。
 - `nuxtTmpl.mcp.authEntries` 在单 issuer 配置下保持未设置（默认空值）；不要设置字符串 `"[]"`。本次仍按单 Supabase issuer 运作，不增加多入口或 token 验证配置。
