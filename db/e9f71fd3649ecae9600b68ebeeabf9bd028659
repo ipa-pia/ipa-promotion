@@ -1,0 +1,18 @@
+docs/mcp-acceptance.md
+  h_6539c3a3cd32c4 7,11,13,22
+docs/mcp-design.md
+  h_6539c3a3cd32c4 41,576
+pnpm-workspace.yaml
+  h_6539c3a3cd32c4 9-16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dbe9f71fd3649ecae9600b68ebeeabf9bd028659",
+  "prompts": {},
+  "humans": {
+    "h_6539c3a3cd32c4": {
+      "author": "xdewx <present150608@sina.com>"
+    }
+  }
+}
