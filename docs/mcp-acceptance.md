@@ -4,7 +4,7 @@
 
 本记录对应 LEOK-19 的验收脚本、README 文档和对 `feat/mcp` 的独立检查。
 
-**当前复核基线：`feat/mcp` 的 HEAD**（本行用自指写法，不钉死某个 SHA——钉死的那棵树写不进它自己）。这份记录落地时 HEAD ≥ `180260713a6a1b710be690e9e49742ee8246398b`（把基线前移到 PR #17 合入后的 doc-only 提交，父提交 `8a69e94bc9f73ddd7c9881ad838b3d8d6c27b958` = PR #17 的 merge commit，其父提交 `cd924a40` + `de55fdb9`）；读本行的人请自己取一次 `git rev-parse feat/mcp` 或 PR #21 的 head sha，本行只保证**下界**，不替代快照。历史基线**只作沿革用，别再当成当前状态证据**：`cd924a40…` 是 PR #16 合入后的 HEAD，`135fceac…` 是 PR #15，`e0382070…` 是 PR #12 / #13 / #14 按序合入后的 HEAD，`cfed99c9…` 是 PR #11 升级 `@nuxt-tmpl/nuxt` 到 0.2.11 后的 HEAD。
+**当前复核基线：`feat/mcp` 的 HEAD**（本行用自指写法，不钉死某个 SHA——钉死的那棵树写不进它自己）。这份记录落地时 HEAD ≥ `180260713a6a1b710be690e9e49742ee8246398b`（把基线前移到 PR #17 合入后的 doc-only 提交，父提交 `8a69e94bc9f73ddd7c9881ad838b3d8d6c27b958` = PR #17 的 merge commit，其父提交 `cd924a40` + `de55fdb9`）；读本行的人请自己取一次 `git rev-parse feat/mcp`，本行只保证**下界**，不替代快照。历史基线**只作沿革用，别再当成当前状态证据**：`cd924a40…` 是 PR #16 合入后的 HEAD，`135fceac…` 是 PR #15，`e0382070…` 是 PR #12 / #13 / #14 按序合入后的 HEAD，`cfed99c9…` 是 PR #11 升级 `@nuxt-tmpl/nuxt` 到 0.2.11 后的 HEAD。
 
 **逐 blob 取证的对象是「取证时的工作树」，不是某棵树**：下面 7 个 blob 在 `8a69e94b` 与 `18026071` 两棵树里是同一份（这两次提交之间它们没动过），也与取证时的工作树逐字节一致：`README.md` `c862587b`、`package.json` `47306186`、`scripts/rls-policy-spec.mjs` `d71b8367`、`scripts/rls-policy-spec.test.mjs` `488fd29a`、`scripts/typecheck-with-provider.mjs` `5d52e60c`、`scripts/verify-mcp.mjs` `55c7e356`、`supabase/migrations/20261026000000_promotion_rls.sql` `86fd3f03`。**`docs/mcp-acceptance.md`（本文件）与 `docs/mcp-design.md` 被显式排除**——这两份文档的 blob 恰恰随基线与措辞一起变，把它们写进"与某棵树一致"的清单里就是自指破口：`8a69e94b` 树里的本文件不是你现在读到的这一份。被排除的是文档，不是判据：真源 `d71b8367` 与工件 `86fd3f03` 自 #12 落地起逐字节未变，即 #15 / #16 / #17 三个 PR 的门禁加固都没有动过渲染语义。
 
