@@ -8,8 +8,6 @@ overrides:
   '@nuxt-tmpl/nuxt': 0.2.12
   '@nuxt-tmpl/core': 0.2.12
   '@ipa-vue/core': 0.3.13
-  '@ipa-vue/element-plus': 0.3.12
-  '@ipa-vue/element-plus>@ipa-schema/ai': '-'
   '@ipa-schema/api': 1.1.4
   '@ipa-schema/logging': 1.0.0
   '@ipa-schema/auth': 1.0.0

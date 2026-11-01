@@ -103,12 +103,21 @@ function stripGroupingParens(expression) {
 // Postgres 的 pg_policies 存的是 deparse 后的表达式，与工件写法必有差异（补括号、补表限定符、补 ::text）。
 // 规范化到同一形状后做**整串相等**比对：词元子串匹配会被 `判据 OR (true)`、`<> 'notadmin'`、`IN ('admin', …)`
 // 这类等价写宽蒙过去，整串相等不会。
+//
+// `auth.jwt()` 的 schema 限定符是 deparse 差异，不是语义差异：工件写 `auth.jwt()`，而建策略时 `auth`
+// 在 `search_path` 里，PG 15+ deparse 出来是 `jwt()`（实测 PG 15.8 的 pg_policies.qual 就是
+// `(((jwt() -> 'app_metadata'::text) ->> 'role'::text) = 'admin'::text)`）。`auth.jwt` 是 Supabase 唯一的
+// JWT 取值函数，去掉 `auth.` 前缀是安全的：它只改**一个**已知 token，不做子串/词元级匹配。
+// 前缀边界收紧到"前面不是标识符字符也不是 `.`"，所以 `pg.jwt()` / `myapp.auth.jwt()` 不会被误当成 `auth.jwt()`。
+// 注意这一步在 `::text` 剥离与分组括号剥离的同一条流水线上做完，不另起一条比对路径——
+// 归一化只有一条实现，才不会出现"两条路径各自放过一种形状"。
 function canonicalExpression(value) {
   const castFree = normalizeExpression(value).replaceAll("::text", "")
   return stripGroupingParens(
     castFree
       .replaceAll(`${RLS_TARGET.qualified}.`, "")
-      .replaceAll(`${RLS_TARGET.table}.`, ""),
+      .replaceAll(`${RLS_TARGET.table}.`, "")
+      .replace(/(^|[^\w.])auth\.jwt\(/g, "$1jwt("),
   )
 }
 
@@ -117,6 +126,26 @@ function roleNames(value) {
     ? value.map(String)
     : String(value ?? "").replace(/^\{|\}$/g, "").split(",")
   return names.map(name => name.trim().toLowerCase()).filter(Boolean).sort()
+}
+
+// `pg_policies.permissive` 的列类型随 Postgres 版本变：
+//   - PostgreSQL ≤ 14：boolean
+//   - PostgreSQL ≥ 15：text，取值 'PERMISSIVE' / 'RESTRICTIVE'
+// Supabase 托管项目默认就是 PG 15 起，所以对着共享库跑时这一列永远是文本形状——
+// 只认 boolean 的判定在 PG 15+ 上必然每条策略都失败。
+//
+// 归一化助手：只接受这两种已知形状（字符串大小写不敏感），统一转成 boolean；
+// 认不出的形状返回 null（交人工复核），**不猜**默认值——猜成 permissive 恰好等于期望时会变成静默绿灯。
+// 所有读 `permissive` 的地方都必须走它（策略比对与未登记策略的方向判定），否则 PG 15+ 上
+// "未登记策略是放宽还是收窄"的方向会退化成"取值未识别"。
+function normalizePermissive(value) {
+  if (typeof value === "boolean") return value
+  if (typeof value === "string") {
+    const text = value.trim().toUpperCase()
+    if (text === "PERMISSIVE") return true
+    if (text === "RESTRICTIVE") return false
+  }
+  return null
 }
 
 function showValue(value) {
@@ -186,11 +215,14 @@ function evaluatePolicy(policy, row) {
   const actualCommand = String(row.cmd ?? "").toUpperCase()
   if (actualCommand !== policy.command) failures.push(`${policy.name} 的 cmd 是 ${actualCommand}，工件要求 ${policy.command}`)
 
-  if (typeof row.permissive === "boolean") {
-    if (row.permissive !== policy.permissive) failures.push(`${policy.name} 是 ${row.permissive ? "permissive" : "restrictive"}，工件要求 as permissive`)
+  // permissive 走归一化助手：PG ≤ 14 给 boolean，PG ≥ 15 给 'PERMISSIVE' / 'RESTRICTIVE' 文本。
+  // 两种形状都认；认不出才报未识别（不猜默认值，猜成 permissive 恰好等于期望时会变成静默绿灯）。
+  const permissive = normalizePermissive(row.permissive)
+  if (permissive === null) {
+    failures.push(`${policy.name} 的 permissive 取值未识别（${row.permissive === undefined ? "字段缺失" : showValue(row.permissive)}），${UNRECOGNISED}`)
   }
-  else {
-    failures.push(`${policy.name} 的 permissive 不是布尔值，${UNRECOGNISED}`)
+  else if (permissive !== policy.permissive) {
+    failures.push(`${policy.name} 是 ${permissive ? "permissive" : "restrictive"}，工件要求 as ${policy.permissive ? "permissive" : "restrictive"}`)
   }
 
   failures.push(...evaluateRoles(policy, row))
@@ -215,8 +247,11 @@ function evaluatePolicy(policy, row) {
 // 所以只报"是放宽"会把复核方向带偏，必须附原文让复核者自己定性。
 function describeUnregistered(rows) {
   const lines = rows.map(row => `${row.policyname}（cmd=${showValue(row.cmd)} / permissive=${showValue(row.permissive)} / roles=${showValue(row.roles)} / qual=${showValue(row.qual)}）`)
-  const permissive = rows.filter(row => row.permissive === true).length
-  const restrictive = rows.filter(row => row.permissive === false).length
+  // 同样走归一化助手：PG 15+ 的 permissive 是 'PERMISSIVE' / 'RESTRICTIVE' 文本，
+  // 只数 `=== true` / `=== false` 会让方向判定恒为 0，退化成"取值未识别"。
+  const permissive = rows.filter(row => normalizePermissive(row.permissive) === true).length
+  const restrictive = rows.filter(row => normalizePermissive(row.permissive) === false).length
+  const unknown = rows.length - permissive - restrictive
   const direction = permissive && restrictive
     ? `其中 permissive 的与工件三条 OR 叠加（放宽），restrictive 的再与之 AND 叠加（收窄）——两个方向同时存在`
     : permissive
@@ -224,7 +259,9 @@ function describeUnregistered(rows) {
         : restrictive
             ? "都是 restrictive：与工件三条 AND 叠加，方向是收窄（可能让公开读或管理写拿不到行）；仍与工件不一致"
             : `permissive 取值未识别（${UNRECOGNISED}）`
-  return `未登记：${lines.join(" / ")}；${direction}`
+  // 已知方向之外还有认不出的行时补一句，避免把"没认出来"算进"都是 permissive"。
+  const unknownNote = unknown && (permissive || restrictive) ? `；另有 ${unknown} 条的 permissive 取值未识别（${UNRECOGNISED}）` : ""
+  return `未登记：${lines.join(" / ")}；${direction}${unknownNote}`
 }
 
 /**

@@ -137,7 +137,9 @@ export default defineNuxtConfig({
       guestRoutes: authGuestRoutes,
       // MCP 使用 Bearer Token 自行鉴权，因此只豁免该端点，避免同级 API 跳过全局鉴权。
       // 模板按「路径段前缀」匹配（/a 覆盖 /a/x/y，/ 只匹配根）。
-      // 英文 locale 需要显式映射模板的 consent 默认豁免；使用精确正则避免放行子路径。
+      // 英文 locale 不需要显式映射：服务端按 authPageRouting.policyPath() 判定，
+      // 已注册的本地化页面先规范化为 canonical path（/en/oauth/consent → /oauth/consent），
+      // 从而命中 @nuxt-tmpl/core 的内置豁免。见 shared/utils/auth-routes.ts 的注释。
       publicRoutes: authPublicRoutes,
     },
     mcp: {
