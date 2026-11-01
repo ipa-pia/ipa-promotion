@@ -19,16 +19,16 @@
 | 验收项 | 结论 | 证据 |
 |---|---|---|
 | 依赖可全新安装 | 通过 | `rm -rf node_modules` + `pnpm install --frozen-lockfile` 成功（pnpm 10.34.8，1536 个包）；另用 `git archive` 干净副本**删 `pnpm-lock.yaml`** 后 `pnpm install` 全新解析成功，`@nuxt-tmpl/nuxt` 落到 `0.2.12` 且 `patch_hash` 生效 |
-| RFC 9728 发现元数据，`authorization_servers` 指向 `.../auth/v1` | **部分通过**：指向目标 issuer = 通过；**公开可达性 = 阻塞** | **① 指向目标 issuer —— 通过**。生产实测 `GET /.well-known/oauth-protected-resource/api/v1/mcp` → 200，`resource` = `<origin>/api/v1/mcp`、`authorization_servers[0]` = `https://oxyvzrwntcadsxyrooal.supabase.co/auth/v1`（指向目标项目、非占位）、`scopes_supported` 为 OIDC 四项、`bearer_methods_supported` 含 `header`。<br>**② 公开可达性 —— 阻塞，待 owner 处置**。生产部署启用了 Vercel Deployment Protection（`ssoProtection.deploymentType = all_except_custom_domains`）且**没有绑定自定义域**（`vercel inspect` 的 alias 为空），因此**裸请求全站 302 → `vercel.com/sso-api`**：第三方 MCP 客户端拿到的就是这个 302，根本到不了本该有的 `401 + WWW-Authenticate`。带 `x-vercel-protection-bypass` 头可取得上述 200 —— 那只证明**应用配置正确**，不证明**服务可被消费**。解锁二选一：给生产绑一个自定义域（`all_except_custom_domains` 对自定义域天然豁免），或关掉该项目的 Deployment Protection（它本是对外推广站 + 公开 MCP，锁在团队 SSO 后自相矛盾）。<br>**时性说明**：更早巡检记录过「线上 200 / 401 / 405」，那是**保护启用之前**的状态（生产部署本身才 17 小时），不能继续当作当前可消费的证明。<br>本地 `.output` 返回构建期占位 `https://placeholder.supabase.co/auth/v1`（本地构建未注入真实 Supabase URL），只证明端点存在与形状正确，不用于该判定 |
+| RFC 9728 发现元数据，`authorization_servers` 指向 `.../auth/v1` | **通过**（issuer 指向与公开可达性都已裸请求实测） | **① 指向目标 issuer —— 通过**。`GET https://www.leoking.xyz/.well-known/oauth-protected-resource/api/v1/mcp` → 200，`resource` = `https://www.leoking.xyz/api/v1/mcp`、`authorization_servers[0]` = `https://oxyvzrwntcadsxyrooal.supabase.co/auth/v1`（指向目标项目、非占位）、`scopes_supported` 为 OIDC 四项、`bearer_methods_supported` 含 `header`。<br>**② 公开可达性 —— 通过**。2026-11-01 在生产**裸请求**复核，全程不带任何绕过头（响应头 `server: Vercel`、`x-vercel-id: sin1::iad1::…`，逐条核过）。<br>**③ 此前的「公开可达性 = 阻塞」结论作废**：那条阻塞观测打在**没有 alias 的那次部署的 hashed deployment URL** 上，而第三方 MCP 客户端用的不是那个地址。三条 URL 的豁免关系不同，复验前先确认自己打的是哪一条：<br>· **hashed deployment URL**（`ipa-promotion-<hash>-xdewxs.vercel.app`）受 Vercel Deployment Protection 保护，裸请求 **302 → `vercel.com/sso-api`**；<br>· **生产 alias** `ipa-promotion.vercel.app` **可达**，且同一处理器的 `resource` 随请求 origin 派生成 `https://ipa-promotion.vercel.app/api/v1/mcp`；<br>· **自定义域** `www.leoking.xyz` **可达**；`leoking.xyz` 裸域 308 → `www`。<br>当前项目设置 `ssoProtection.deploymentType = prod_deployment_urls_and_all_previews`（`vercel project protection` 只读核对，未读取任何 bypass 密钥值），该值只保护生产 hashed deployment URL 与全部 Preview，生产 alias 与自定义域都在豁免范围内；`all_except_custom_domains` 至少同样豁免自定义域，**但该模式下生产 alias 是否仍可达未经实测，别把它当接入保障**。稳定接入地址因此取 `https://www.leoking.xyz/api/v1/mcp`（见 README「接入地址」）。<br>**时性说明**：更早巡检记录的生产 200 / 401 / 405 属于**更早的部署**，不能当作当前状态；每次复验都以当时 `Ready` 的生产部署重新取证。<br>本地 `.output` 返回构建期占位 `https://placeholder.supabase.co/auth/v1`（本地构建未注入真实 Supabase URL），只证明端点存在与形状正确，不用于该判定 |
 | `/oauth/consent` 来自模板，项目未自建 | 通过 | 无 `app/pages/oauth/`；`server`、`app` 全仓无自建 `.well-known`/consent 实现；zh 与 `/en/oauth/consent` 别名均 200 `text/html` 且含 `</html>`；Vercel 构建路由含 `oauth/consent` 与 `.well-known/oauth-protected-resource/[...]` |
 | MCP 端点可用、鉴权边界正确 | 部分通过 | 匿名/凭据无关部分已实测通过（下一张表）；**六工具的 403 边界与 RLS 隔离未验证**（需真实 token） |
 | `pnpm test:mcp` 端到端 | 未通过 | 缺凭据，脚本按设计退出 1；本文「尚未验证的上线门禁」各条仍成立 |
-| README「MCP 接入」完整 | 通过 | 含硬前置条件、模板复用边界表、发现端点正确/错误用法对比、`publicRoutes` 放行依据、六工具权限表、验收变量表与「缺配置不算通过」声明 |
+| README「MCP 接入」完整 | 通过 | 含硬前置条件、模板复用边界表、稳定接入地址与接入方自查判据（`resource` 随 origin、401 + `WWW-Authenticate`、405 + `Allow: POST`）、发现端点正确/错误用法对比、`publicRoutes` 放行依据、六工具权限表、验收变量表与「缺配置不算通过」声明 |
 | 未自建模板已提供的组件 | 通过 | 唯一 `.well-known` 命中是 `server/api/v1/mcp.post.ts` 里拼 401 challenge 的 URL 字符串，非实现 |
 | 英文路由 302 循环已消失 | 通过 | `Accept-Language: en` 下 `/` 一跳 302 → `/en` 200，`/en/sign-in` 200 |
 | `@ipa-vue/core` 裸导入 workaround 有效 | 通过 | 构建产物 22 个 client JS 中该裸导入命中 0 次 |
 
-### 凭据无关的鉴权边界（本地 `.output` 与 Preview 双环境一致）
+### 凭据无关的鉴权边界（本地 `.output`、Preview 与生产裸请求三处一致）
 
 | 请求 | 结果 |
 |---|---|
@@ -38,6 +38,8 @@
 | `GET /api/v1/other` | 401（豁免未扩散到同级 API） |
 | `GET /oauth/unknown` | 302 → `/`（未误放行相似路径） |
 | `GET /.well-known/oauth-protected-resource` 无后缀 | 200，`resource` 退化为 `<origin>/` —— 与 README 的「必须带后缀」警告一致 |
+
+上表在 2026-11-01 于生产自定义域 `https://www.leoking.xyz` 以裸请求逐条复核，结果一致：无 token `POST` → 401 + `WWW-Authenticate: Bearer realm="ipa-promotion", resource_metadata="https://www.leoking.xyz/.well-known/oauth-protected-resource/api/v1/mcp"`；垃圾 token 的 `POST`（带 `initialize`）→ **401 而不是 500**；`GET` / `DELETE` → 405 / 405 + `Allow: POST`。同一轮还核了应用侧的 default-deny：`/api/v1/promotions` GET 401、POST 401，`/api/v1/users` 401，`/admin` 与 `/profile` 302 → `/`，`/oauth/consent` 200 —— 放行只落在 `/api/v1/mcp` 与发现路径上，没有扩散。授权服务器侧 `GET https://oxyvzrwntcadsxyrooal.supabase.co/auth/v1/.well-known/oauth-authorization-server` → 200 且 `issuer` 与保护资源元数据的 `authorization_servers[0]` **逐字相等**（LEOK-23 的 issuer 匹配判据通过）。
 
 ## RLS 工件（#12 已合入 `feat/mcp`；门禁补强按 #15 / #16 / #17 分批合入，该线到此收口）
 
