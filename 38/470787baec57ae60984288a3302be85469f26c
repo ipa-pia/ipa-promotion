@@ -1,0 +1,24 @@
+README.md
+  h_6539c3a3cd32c4 60
+docs/mcp-acceptance.md
+  h_6539c3a3cd32c4 7,21-22,70
+docs/mcp-design.md
+  h_6539c3a3cd32c4 6,20,37,41,45,49,51-52,55,508,510,576-577,620,622
+nuxt.config.ts
+  h_6539c3a3cd32c4 140-142
+pnpm-lock.yaml
+  h_6539c3a3cd32c4 11
+pnpm-workspace.yaml
+  h_6539c3a3cd32c4 9-12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "38470787baec57ae60984288a3302be85469f26c",
+  "prompts": {},
+  "humans": {
+    "h_6539c3a3cd32c4": {
+      "author": "xdewx <present150608@sina.com>"
+    }
+  }
+}
