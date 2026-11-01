@@ -38,7 +38,7 @@
 
 | 能力 | 产物 | 结论 |
 |---|---|---|
-| RFC 9728 发现元数据 | `runtime/server/handlers/oauth-protected-resource.js` | 注册 `/.well-known/oauth-protected-resource` 与 `/.well-known/oauth-protected-resource/**`；0.2.12 起不依赖 auth provider |
+| RFC 9728 发现元数据 | `runtime/server/handlers/oauth-protected-resource.js` | 注册 `/.well-known/oauth-protected-resource` 与 `/.well-known/oauth-protected-resource/**`；0.2.11 起不依赖 auth provider |
 | OAuth 同意页 | `runtime/pages/oauth/consent.vue` + `runtime/components/oauth/DefaultOAuthConsent.vue` | provider = `supabase` 且项目未自建同名页时自动注册；UI 可用 `useAuthForms({ OAuthConsentForm })` 替换 |
 | Bearer 客户端 | `runtime/server/utils/supabase.js` → `createTokenSupabaseClient(token)` | 模板已提供，MCP 鉴权与数据访问直接复用 |
 | 响应解包 | `runtime/server/utils/api-response.js` → `skipResponseWrap(event)` | 模板已提供，用于绕过 `apiResponse` 插件的信封包裹 |
@@ -573,7 +573,7 @@ export default defineEventHandler(async (event) => {
 | **R2** | **P0（硬门禁）** | **Supabase OAuth 签发的 access token 的 claims 假设**：本方案假定其 `app_metadata` 含 `role`、且 `iss`/`aud` 与会话 token 一致 | 若 OAuth token 不带 `app_metadata` → 管理员判定恒为 false；**RLS 启用后影响更大**：`auth.jwt() -> 'app_metadata' ->> 'role'` 取不到 admin → RLS 写策略同样拒绝，MCP 写入**全线不可用**（fail-closed） | 阶段 3 验收脚本必须用**真实 OAuth 流程**取 token 并断言 `app_metadata.role === "admin"` 可判定（A11，**列为 MCP 上线前的硬门禁**）。若不成立 → 管理员判定需改为服务端查库（service role 读 `auth.users.raw_app_meta_data`），届时需单独立项 |
 | **R3** | P1 | **audience 未绑定 MCP resource**：Supabase OAuth 服务端可能忽略 RFC 8707 的 `resource` 参数，token 的 `aud` 只能是 `authenticated` | 为其它资源签发的 token 可能被重放到 MCP 端点 | 以 `iss` + `aud === "authenticated"` + 服务端 `getUser` 校验作为等效强度；记录为已知残留风险，接受 |
 | **R4** | P1 | **OAuth 同意页只授予 OIDC scope**（`openid/email/profile/phone`），无业务 scope | 不能用 scope 做业务鉴权 | 已定案：权限判定只用 `app_metadata.role`；写进 README 与工具描述 |
-| **R5** | P1 | **Consent 页面依赖 Supabase provider**：保护资源元数据在 0.2.12 已不再受 provider 条件限制，但同意页仍依赖 Supabase | provider 未设为 supabase 时 consent 流程不可用 | 部署环境固化 provider=supabase；README 写明；真实 OAuth 验收 |
+| **R5** | P1 | **Consent 页面依赖 Supabase provider**：保护资源元数据在 0.2.11 已不再受 provider 条件限制，但同意页仍依赖 Supabase | provider 未设为 supabase 时 consent 流程不可用 | 部署环境固化 provider=supabase；README 写明；真实 OAuth 验收 |
 | **R6** | P1 | **模板版本混搭**：`nuxt` 与 `core` 版本不一致时，豁免清单与发现元数据行为可能不一致 | 路由豁免或 discovery 行为不一致 | package direct pin 与 workspace override 同步固定 `@nuxt-tmpl/nuxt` / `@nuxt-tmpl/core` 为 `0.2.12` |
 | **R7** | P1 | **apiResponse / api-error-handler 包裹 JSON-RPC 响应** | 客户端收到 `{code,data,message}` 而非 JSON-RPC，MCP 握手失败 | 端点入口 `skipResponseWrap(event)` + 用 h3 的 `defineEventHandler`（**不用** `defineApiHandler`）+ 错误一律返回 Response |
 | **R8** | P1 | **公开读 + AI 写 = 垃圾内容/提示注入风险**：MCP 客户端可能被诱导写入垃圾推广链接或钓鱼 URL | 站点公信力受损、可能有害用户 | 建议增加人工复核或域名白名单（**本期不做**，列入 §8 遗留项） |

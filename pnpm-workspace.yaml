@@ -6,13 +6,14 @@ overrides:
   "@nuxt-tmpl/nuxt": "0.2.12"
   "@nuxt-tmpl/core": "0.2.12"
   "@ipa-vue/core": "0.3.13"
-  # 0.3.12 was unpublished; 0.3.13 is the only version on the registry. Nothing
-  # here depends on this package today, but the override must point at a
-  # resolvable version so a clean install cannot fail at the tarball stage.
-  "@ipa-vue/element-plus": "0.3.13"
-  # The published UI package declares a monorepo-only peer that is not published
-  # to the registry at all and is unused here, so drop the peer requirement.
-  "@ipa-vue/element-plus>@ipa-schema/ai": "-"
+  # @ipa-vue/element-plus 的两条 override 已删除：它不在依赖图里（lockfile 中
+  # 只有 overrides 块出现它，importers/packages/snapshots 均无），因此
+  #   - "0.3.12" 指向一个已 unpublished 的版本，但不被解析的包不会被 fetch，
+  #     所以它一直无害 —— 不存在「干净安装会在 tarball 阶段炸」的风险；
+  #   - 嵌套的 "@ipa-vue/element-plus>@ipa-schema/ai" 只在锚定包进入图时生效，
+  #     锚定包不在图里，故它也不可能承重。
+  # 保留它们反而有害：override 压过 manifest，将来有人加
+  # "@ipa-vue/element-plus": "^0.4" 时会被静默钉在旧版本上。
   # @nuxt-tmpl/nuxt 的发布产物把依赖写成了 workspace:*（monorepo 专用协议），
   # 单独安装时 pnpm 找不到工作区包。指向 registry 上实际发布的版本。
   "@ipa-schema/api": "1.1.4"
