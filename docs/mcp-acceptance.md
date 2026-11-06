@@ -4,13 +4,13 @@
 
 本记录对应 LEOK-19 的验收脚本、README 文档和对 `feat/mcp` 的独立检查。
 
-**当前复核基线：`feat/mcp` 的 HEAD**（本行用自指写法，不钉死某个 SHA——钉死的那棵树写不进它自己）。这份记录落地时 HEAD ≥ `180260713a6a1b710be690e9e49742ee8246398b`（把基线前移到 PR #17 合入后的 doc-only 提交，父提交 `8a69e94bc9f73ddd7c9881ad838b3d8d6c27b958` = PR #17 的 merge commit，其父提交 `cd924a40` + `de55fdb9`）；读本行的人请自己取一次 `git rev-parse feat/mcp` 或 PR #7 的 head sha，本行只保证**下界**，不替代快照。历史基线**只作沿革用，别再当成当前状态证据**：`cd924a40…` 是 PR #16 合入后的 HEAD，`135fceac…` 是 PR #15，`e0382070…` 是 PR #12 / #13 / #14 按序合入后的 HEAD，`cfed99c9…` 是 PR #11 升级 `@nuxt-tmpl/nuxt` 到 0.2.11 后的 HEAD。
+**当前复核基线：`feat/mcp` 的 HEAD**（本行用自指写法，不钉死某个 SHA——钉死的那棵树写不进它自己）。这份记录落地时 HEAD ≥ `180260713a6a1b710be690e9e49742ee8246398b`（把基线前移到 PR #17 合入后的 doc-only 提交，父提交 `8a69e94bc9f73ddd7c9881ad838b3d8d6c27b958` = PR #17 的 merge commit，其父提交 `cd924a40` + `de55fdb9`）；读本行的人请自己取一次 `git rev-parse feat/mcp`，本行只保证**下界**，不替代快照。历史基线**只作沿革用，别再当成当前状态证据**：`cd924a40…` 是 PR #16 合入后的 HEAD，`135fceac…` 是 PR #15，`e0382070…` 是 PR #12 / #13 / #14 按序合入后的 HEAD，`cfed99c9…` 是 PR #11 升级 `@nuxt-tmpl/nuxt` 到 0.2.11 后的 HEAD。
 
 **逐 blob 取证的对象是「取证时的工作树」，不是某棵树**：下面 7 个 blob 在 `8a69e94b` 与 `18026071` 两棵树里是同一份（这两次提交之间它们没动过），也与取证时的工作树逐字节一致：`README.md` `c862587b`、`package.json` `47306186`、`scripts/rls-policy-spec.mjs` `d71b8367`、`scripts/rls-policy-spec.test.mjs` `488fd29a`、`scripts/typecheck-with-provider.mjs` `5d52e60c`、`scripts/verify-mcp.mjs` `55c7e356`、`supabase/migrations/20261026000000_promotion_rls.sql` `86fd3f03`。**`docs/mcp-acceptance.md`（本文件）与 `docs/mcp-design.md` 被显式排除**——这两份文档的 blob 恰恰随基线与措辞一起变，把它们写进"与某棵树一致"的清单里就是自指破口：`8a69e94b` 树里的本文件不是你现在读到的这一份。被排除的是文档，不是判据：真源 `d71b8367` 与工件 `86fd3f03` 自 #12 落地起逐字节未变，即 #15 / #16 / #17 三个 PR 的门禁加固都没有动过渲染语义。
 
-下面「离线证据」的仓库内检查是在与 `18026071` 只差本文件这几行措辞的工作树上重跑的（测试只读代码与工件那 7 个 blob，它们在两棵树里同一份）：`pnpm test` 5 个文件 / 100 项（`scripts/rls-policy-spec.test.mjs` 67 项）、`pnpm lint` 0 error。Vercel Preview 的观测对象是 `cfed99c9` 的部署，与更早的部署一起不再作为当前状态证据（观测方法保留在文末）。PR #7（`feat/mcp` → `main`）的 head 随 `feat/mcp` 同步，这份记录落地时为 31 文件 `+9487/−4421`、`MERGEABLE` / `CLEAN`；它的合并与发布由 leoking 决定。
+下面「离线证据」的仓库内检查是在与 `18026071` 只差本文件这几行措辞的工作树上重跑的（测试只读代码与工件那 7 个 blob，它们在两棵树里同一份）：`pnpm test` 5 个文件 / 100 项（`scripts/rls-policy-spec.test.mjs` 67 项）、`pnpm lint` 0 error。Vercel Preview 的观测对象是 `cfed99c9` 的部署，与更早的部署一起不再作为当前状态证据（观测方法保留在文末）。PR #21（`feat/mcp` → `main`）的 head 随 `feat/mcp` 同步；它的合并与发布由 leoking 决定。
 
-**当前结论：模板路由、MCP HTTP 边界与全部凭据无关项已独立复验通过；真实 OAuth/RLS 端到端验收尚未通过。** 本地环境没有 `.env` 或 MCP 测试变量；Vercel Preview 已配置 Supabase provider、URL 和 anon key，但还没有真实 OAuth 管理员/普通用户 token、管理员浏览器会话 Cookie 或数据库只读连接。不能据此声称 `pnpm test:mcp` 或生产上线门禁通过。PR #7 的合并与发布由 leoking 决定，不由开发侧推进。
+**当前结论：模板路由、MCP HTTP 边界与全部凭据无关项已独立复验通过；真实 OAuth/RLS 端到端验收尚未通过。** 本地环境没有 `.env` 或 MCP 测试变量；Vercel Preview 已配置 Supabase provider、URL 和 anon key，但还没有真实 OAuth 管理员/普通用户 token、管理员浏览器会话 Cookie 或数据库只读连接。不能据此声称 `pnpm test:mcp` 或生产上线门禁通过。PR #21（`feat/mcp` → `main`）的合并与发布由 leoking 决定，不由开发侧推进。
 
 ## 当前基线的离线证据（2026-10-26）
 
@@ -18,17 +18,17 @@
 
 | 验收项 | 结论 | 证据 |
 |---|---|---|
-| 依赖可全新安装 | 通过 | `rm -rf node_modules` + `pnpm install --frozen-lockfile` 成功（pnpm 10.34.8，1536 个包）；另用 `git archive` 干净副本**删 `pnpm-lock.yaml`** 后 `pnpm install` 全新解析成功，`@nuxt-tmpl/nuxt` 落到 `0.2.11` 且 `patch_hash` 生效 |
-| RFC 9728 发现元数据，`authorization_servers` 指向 `.../auth/v1` | 部分通过 | 本地生产产物与 Preview 均 200：`resource` = `<origin>/api/v1/mcp`、`scopes_supported` 为 OIDC 四项、`bearer_methods_supported` 含 `header`。`authorization_servers[0]` = 目标 Supabase `/auth/v1` **只有 Preview 那一份证据成立**（用文末「Vercel Preview 的观测方法」取到）；本地 `.output` 返回的是构建期占位 `https://placeholder.supabase.co/auth/v1`——本地构建未注入真实 Supabase URL，因此本地只证明端点存在与形状正确，不证明指向目标项目 |
+| 依赖可全新安装 | 通过 | `rm -rf node_modules` + `pnpm install --frozen-lockfile` 成功（pnpm 10.34.8，1536 个包）；另用 `git archive` 干净副本**删 `pnpm-lock.yaml`** 后 `pnpm install` 全新解析成功，`@nuxt-tmpl/nuxt` 落到 `0.2.12` 且 `patch_hash` 生效 |
+| RFC 9728 发现元数据，`authorization_servers` 指向 `.../auth/v1` | **通过**（issuer 指向与公开可达性都已裸请求实测） | **① 指向目标 issuer —— 通过**。`GET https://www.leoking.xyz/.well-known/oauth-protected-resource/api/v1/mcp` → 200，`resource` = `https://www.leoking.xyz/api/v1/mcp`、`authorization_servers[0]` = `https://oxyvzrwntcadsxyrooal.supabase.co/auth/v1`（指向目标项目、非占位）、`scopes_supported` 为 OIDC 四项、`bearer_methods_supported` 含 `header`。<br>**② 公开可达性 —— 通过**。2026-11-01 在生产**裸请求**复核，全程不带任何绕过头（响应头 `server: Vercel`、`x-vercel-id: sin1::iad1::…`，逐条核过）。<br>**③ 此前的「公开可达性 = 阻塞」结论作废**：那条阻塞观测打在**没有 alias 的那次部署的 hashed deployment URL** 上，而第三方 MCP 客户端用的不是那个地址。三条 URL 的豁免关系不同，复验前先确认自己打的是哪一条：<br>· **hashed deployment URL**（`ipa-promotion-<hash>-xdewxs.vercel.app`）受 Vercel Deployment Protection 保护，裸请求 **302 → `vercel.com/sso-api`**；<br>· **生产 alias** `ipa-promotion.vercel.app` **可达**，且同一处理器的 `resource` 随请求 origin 派生成 `https://ipa-promotion.vercel.app/api/v1/mcp`；<br>· **自定义域** `www.leoking.xyz` **可达**；`leoking.xyz` 裸域 308 → `www`。<br>当前项目设置 `ssoProtection.deploymentType = prod_deployment_urls_and_all_previews`（`vercel project protection` 只读核对，未读取任何 bypass 密钥值），该值只保护生产 hashed deployment URL 与全部 Preview，生产 alias 与自定义域都在豁免范围内；`all_except_custom_domains` 至少同样豁免自定义域，**但该模式下生产 alias 是否仍可达未经实测，别把它当接入保障**。稳定接入地址因此取 `https://www.leoking.xyz/api/v1/mcp`（见 README「接入地址」）。<br>**时性说明**：更早巡检记录的生产 200 / 401 / 405 属于**更早的部署**，不能当作当前状态；每次复验都以当时 `Ready` 的生产部署重新取证。<br>本地 `.output` 返回构建期占位 `https://placeholder.supabase.co/auth/v1`（本地构建未注入真实 Supabase URL），只证明端点存在与形状正确，不用于该判定 |
 | `/oauth/consent` 来自模板，项目未自建 | 通过 | 无 `app/pages/oauth/`；`server`、`app` 全仓无自建 `.well-known`/consent 实现；zh 与 `/en/oauth/consent` 别名均 200 `text/html` 且含 `</html>`；Vercel 构建路由含 `oauth/consent` 与 `.well-known/oauth-protected-resource/[...]` |
 | MCP 端点可用、鉴权边界正确 | 部分通过 | 匿名/凭据无关部分已实测通过（下一张表）；**六工具的 403 边界与 RLS 隔离未验证**（需真实 token） |
 | `pnpm test:mcp` 端到端 | 未通过 | 缺凭据，脚本按设计退出 1；本文「尚未验证的上线门禁」各条仍成立 |
-| README「MCP 接入」完整 | 通过 | 含硬前置条件、模板复用边界表、发现端点正确/错误用法对比、`publicRoutes` 放行依据、六工具权限表、验收变量表与「缺配置不算通过」声明 |
+| README「MCP 接入」完整 | 通过 | 含硬前置条件、模板复用边界表、稳定接入地址与接入方自查判据（`resource` 随 origin、401 + `WWW-Authenticate`、405 + `Allow: POST`）、发现端点正确/错误用法对比、`publicRoutes` 放行依据、六工具权限表、验收变量表与「缺配置不算通过」声明 |
 | 未自建模板已提供的组件 | 通过 | 唯一 `.well-known` 命中是 `server/api/v1/mcp.post.ts` 里拼 401 challenge 的 URL 字符串，非实现 |
 | 英文路由 302 循环已消失 | 通过 | `Accept-Language: en` 下 `/` 一跳 302 → `/en` 200，`/en/sign-in` 200 |
 | `@ipa-vue/core` 裸导入 workaround 有效 | 通过 | 构建产物 22 个 client JS 中该裸导入命中 0 次 |
 
-### 凭据无关的鉴权边界（本地 `.output` 与 Preview 双环境一致）
+### 凭据无关的鉴权边界（本地 `.output`、Preview 与生产裸请求三处一致）
 
 | 请求 | 结果 |
 |---|---|
@@ -38,6 +38,8 @@
 | `GET /api/v1/other` | 401（豁免未扩散到同级 API） |
 | `GET /oauth/unknown` | 302 → `/`（未误放行相似路径） |
 | `GET /.well-known/oauth-protected-resource` 无后缀 | 200，`resource` 退化为 `<origin>/` —— 与 README 的「必须带后缀」警告一致 |
+
+上表在 2026-11-01 于生产自定义域 `https://www.leoking.xyz` 以裸请求逐条复核，结果一致：无 token `POST` → 401 + `WWW-Authenticate: Bearer realm="ipa-promotion", resource_metadata="https://www.leoking.xyz/.well-known/oauth-protected-resource/api/v1/mcp"`；垃圾 token 的 `POST`（带 `initialize`）→ **401 而不是 500**；`GET` / `DELETE` → 405 / 405 + `Allow: POST`。同一轮还核了应用侧的 default-deny：`/api/v1/promotions` GET 401、POST 401，`/api/v1/users` 401，`/admin` 与 `/profile` 302 → `/`，`/oauth/consent` 200 —— 放行只落在 `/api/v1/mcp` 与发现路径上，没有扩散。授权服务器侧 `GET https://oxyvzrwntcadsxyrooal.supabase.co/auth/v1/.well-known/oauth-authorization-server` → 200 且 `issuer` 与保护资源元数据的 `authorization_servers[0]` **逐字相等**（LEOK-23 的 issuer 匹配判据通过）。
 
 ## RLS 工件（#12 已合入 `feat/mcp`；门禁补强按 #15 / #16 / #17 分批合入，该线到此收口）
 
@@ -67,7 +69,7 @@
 | 共享输入契约 | 通过 | `server/utils/mcp.ts` 与 HTTP parser 都引用 `shared/contracts/promotion.ts` |
 | 数据访问没有 HTTP 自调用 | 通过 | MCP 数据层直接通过调用者 JWT 使用 `createTokenSupabaseClient` |
 | 模板复用边界 | 通过 | 项目没有自建 `.well-known` 发现处理器或 `app/pages/oauth/consent.vue`；README 明确区分模板与项目能力 |
-| 路由放行依据 | 通过 | `nuxt.config.ts` 只配置 `/api/v1/mcp`；core 0.2.11 服务端 `isSafeRoute` 内置发现路径和默认 consent 豁免，`@ipa-schema/auth` 客户端默认路由表不是服务端判定依据；英文 consent 使用项目精确别名 |
+| 路由放行依据 | 通过 | `nuxt.config.ts` 只配置 `/api/v1/mcp`；core 0.2.12 服务端 `isSafeRoute` 内置发现路径和默认 consent 豁免，`@ipa-schema/auth` 客户端默认路由表不是服务端判定依据；英文 consent 由模板 `authPageRouting.policyPath()` 规范化为 canonical path 后命中同一豁免，**项目未加 `/en` 别名**（`shared/utils/auth-routes.ts` 有回归用例锁定该行为） |
 | RLS 策略有版本化载体且断言同源 | 通过 | 见上一节 |
 | 脚本使用官方客户端及编译产物 | 已实现 | `scripts/verify-mcp.mjs` 使用 MCP SDK `Client` / `StreamableHTTPClientTransport` 启动 `.output/server/index.mjs` |
 | 缺配置时明确失败 | 已实现 | 缺少 `.env` 时给出中文提示；脚本列出缺失变量、依赖或 build 产物，并以非零状态退出，不使用 mock 降级 |

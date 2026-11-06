@@ -57,7 +57,7 @@ pnpm dev
 
 ### 硬前置条件
 
-- `NUXT_PUBLIC_AUTH_PROVIDER=supabase`：OAuth consent 页面需要 Supabase；0.2.11 的保护资源发现元数据注册不再依赖 provider，但本项目的 MCP 授权服务器仍是 Supabase。
+- `NUXT_PUBLIC_AUTH_PROVIDER=supabase`：OAuth consent 页面需要 Supabase；0.2.12 的保护资源发现元数据注册不再依赖 provider，但本项目的 MCP 授权服务器仍是 Supabase。
 - `NUXT_PUBLIC_AUTH_PROVIDER` 是**构建期常量**（模板 setup 阶段读取）：改动后必须重新构建，不是运行时开关。
 - `@nuxt-tmpl/nuxt` 与 `@nuxt-tmpl/core` 必须保持同为 `0.2.12`；`@ipa-vue/core` 固定由 workspace override 提升至 `0.3.13`。发布包还含 `workspace:*` 依赖，`@ipa-schema/api` 的 override 是独立安装前置。
 - `nuxtTmpl.mcp.authEntries` 在单 issuer 配置下保持未设置（默认空值）；不要设置字符串 `"[]"`。本次仍按单 Supabase issuer 运作，不增加多入口或 token 验证配置。
@@ -70,6 +70,34 @@ pnpm dev
 | `/oauth/consent` 同意页 | **模板** | `runtime/pages/oauth/consent.vue` + `DefaultOAuthConsent.vue` 自动注册，仍依赖 Supabase provider；禁止在 `app/pages/` 下自建同名页（会顶掉模板实现）；定制样式走 `useAuthForms({ OAuthConsentForm })` 包装，不要从零重写 |
 | OAuth issuer 推导 | **模板** | 默认 `authorization_servers[0] = <NUXT_PUBLIC_SUPABASE_URL origin>/auth/v1`；非 Supabase 授权服务器用 `nuxtTmpl.mcp.authorizationServer` 显式覆盖 |
 | `/api/v1/mcp` MCP 端点与工具面 | **项目自建** | Streamable HTTP 无状态端点与六个推广链接工具（见 `docs/mcp-design.md`） |
+
+### 接入地址
+
+稳定生产地址：**`https://www.leoking.xyz/api/v1/mcp`** —— MCP 客户端就填这一个。
+
+不要用 Vercel 的 hashed 部署 URL（`https://ipa-promotion-<hash>-xdewxs.vercel.app/api/v1/mcp`）当接入地址：它**每次部署都换**，而且受 Vercel Deployment Protection 保护，裸请求拿到的是 `302 → vercel.com/sso-api`，到不了应用。生产 alias `https://ipa-promotion.vercel.app/api/v1/mcp` 当前可达，但同样不是长期地址。
+
+接入方可以自己核验，三条判据都是裸请求、不需要任何绕过头：
+
+```bash
+# 1. 发现元数据 200，且 resource 随请求 origin 派生（换成 alias 就打回 alias）
+curl -i https://www.leoking.xyz/.well-known/oauth-protected-resource/api/v1/mcp
+#   {"resource":"https://www.leoking.xyz/api/v1/mcp",
+#    "authorization_servers":["https://oxyvzrwntcadsxyrooal.supabase.co/auth/v1"],
+#    "scopes_supported":["openid","email","profile","phone"],"bearer_methods_supported":["header"]}
+
+# 2. 不带 token 的 MCP 请求：401 + Bearer challenge，challenge 指回上一条的发现地址
+curl -i -X POST -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"0"}}}' \
+  https://www.leoking.xyz/api/v1/mcp
+#   HTTP/2 401
+#   www-authenticate: Bearer realm="ipa-promotion", resource_metadata="https://www.leoking.xyz/.well-known/oauth-protected-resource/api/v1/mcp"
+
+# 3. GET / DELETE：405 + Allow: POST（端点只接受 POST）
+curl -i -X GET https://www.leoking.xyz/api/v1/mcp
+```
+
+任何一条拿到 `302 → vercel.com/sso-api` 而不是上面的结果，说明请求打在被平台部署保护拦下的部署 URL 上，不代表服务端配置有问题。第 1 条若 `resource` 是 `<origin>/`（少了 `/api/v1/mcp` 后缀），是发现地址写错，见下一节。
 
 ### 发现端点用法（客户端注意）
 
@@ -93,9 +121,9 @@ curl -i https://<host>/.well-known/oauth-protected-resource
 
 ### MCP 端点与认证
 
-- 端点：`POST /api/v1/mcp`，使用 Streamable HTTP，无状态并返回 JSON；每次请求都要提供 `Authorization: Bearer <Supabase OAuth access token>`。
+- 端点：`POST /api/v1/mcp`（线上完整地址 `https://www.leoking.xyz/api/v1/mcp`，见「接入地址」一节），使用 Streamable HTTP，无状态并返回 JSON；每次请求都要提供 `Authorization: Bearer <Supabase OAuth access token>`。
 - 读工具允许任意**已认证**用户；写工具只允许 `app_metadata.role === "admin"`。拒绝访问时读工具仍在工具列表中，调用写工具会返回 403。管理员角色取自 Supabase `app_metadata`，不能用用户可修改的 `user_metadata` 或 OAuth scope 代替。
-- 首次连接由 MCP 客户端按 OAuth Protected Resource Metadata 发现流程，从带端点后缀的发现地址开始授权：`https://<host>/.well-known/oauth-protected-resource/api/v1/mcp`。在 `/oauth/consent` 完成模板提供的授权页流程后，客户端应自动在 MCP 请求中附带 access token；不要把 token 写入源码、日志或提交到仓库。
+- 首次连接由 MCP 客户端按 OAuth Protected Resource Metadata 发现流程，从带端点后缀的发现地址开始授权：`https://<host>/.well-known/oauth-protected-resource/api/v1/mcp`（线上 `<host>` = `www.leoking.xyz`）。在 `/oauth/consent` 完成模板提供的授权页流程后，客户端应自动在 MCP 请求中附带 access token；不要把 token 写入源码、日志或提交到仓库。
 - OAuth token 必须属于当前 Supabase 项目；管理员测试 token 的 `app_metadata.role` 必须为 `admin`，普通用户测试 token 则不能为 `admin`。OAuth 是否能签发包含该 claim 的 token 是上线前置验证。
 
 ### 工具清单
