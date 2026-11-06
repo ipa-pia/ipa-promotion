@@ -1,0 +1,18 @@
+package.json
+  h_6539c3a3cd32c4 37-38
+pnpm-lock.yaml
+  h_6539c3a3cd32c4 8-9,43-44,46-47,1551-1552,1554-1555,1570,9974,9976,9984,9995
+pnpm-workspace.yaml
+  h_6539c3a3cd32c4 4-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7de5a5d5e8333368dd0a418f0ec3d09e9039bc82",
+  "prompts": {},
+  "humans": {
+    "h_6539c3a3cd32c4": {
+      "author": "xdewx <present150608@sina.com>"
+    }
+  }
+}

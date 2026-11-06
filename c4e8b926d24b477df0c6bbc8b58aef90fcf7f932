@@ -1,0 +1,21 @@
+package.json
+  s_00d3c3a52cc65e::t_cc59c1ee86b96b 4,90
+pnpm-lock.yaml
+  s_00d3c3a52cc65e::t_15000fba4c3721 17-19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c4e8b926d24b477df0c6bbc8b58aef90fcf7f932",
+  "prompts": {},
+  "sessions": {
+    "s_00d3c3a52cc65e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1713c-e645-7e32-9cbf-bdec37e161a0",
+        "model": "gpt-6-luna"
+      },
+      "human_author": "xdewx <present150608@sina.com>"
+    }
+  }
+}

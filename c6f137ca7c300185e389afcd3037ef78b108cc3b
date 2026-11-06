@@ -1,0 +1,31 @@
+docs/mcp-acceptance.md
+  s_bded39028d1b84::t_2f1124f76c1042 21-34
+  s_bded39028d1b84::t_023bd54cad15a6 1-20,35-48
+package.json
+  s_bded39028d1b84::t_1739e91f4ed110 14
+scripts/verify-mcp.mjs
+  s_bded39028d1b84::t_ec1d2ddaf3e74f 1-12,15-26,28-37,42-76,85-167,169-209,211-231,234-244,246-283,285,287-312,315-319,321-349,356-361,363,365-378
+  s_bded39028d1b84::t_023bd54cad15a6 13-14,27,350-355
+  s_bded39028d1b84::t_2f1124f76c1042 38-41,77-84
+  s_bded39028d1b84::t_1735f613da852f 168,210,232-233,245,284,286,313-314,320,362,364
+README.md
+  s_bded39028d1b84::t_1739e91f4ed110 71,89-131,174
+.env.example
+  s_bded39028d1b84::t_1735f613da852f 41-46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c6f137ca7c300185e389afcd3037ef78b108cc3b",
+  "prompts": {},
+  "sessions": {
+    "s_bded39028d1b84": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a17120-3a84-7d60-bff1-09de7650d77d",
+        "model": "gpt-6-luna"
+      },
+      "human_author": "xdewx <present150608@sina.com>"
+    }
+  }
+}

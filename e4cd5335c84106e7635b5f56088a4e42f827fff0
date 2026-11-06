@@ -1,0 +1,16 @@
+scripts/rls-policy-spec.mjs
+  h_6539c3a3cd32c4 106-113,119-120,131-150,218-222,224-225,250-254,262-264
+scripts/rls-policy-spec.test.mjs
+  h_6539c3a3cd32c4 22-30,72-82,771-893
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e4cd5335c84106e7635b5f56088a4e42f827fff0",
+  "prompts": {},
+  "humans": {
+    "h_6539c3a3cd32c4": {
+      "author": "xdewx <present150608@sina.com>"
+    }
+  }
+}

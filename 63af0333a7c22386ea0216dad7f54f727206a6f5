@@ -1,0 +1,20 @@
+docs/mcp-acceptance.md
+  s_bded39028d1b84::t_5f8c3ad9841ce0 49,62-63
+  s_bded39028d1b84::t_711702c8e3c826 7-23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "63af0333a7c22386ea0216dad7f54f727206a6f5",
+  "prompts": {},
+  "sessions": {
+    "s_bded39028d1b84": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a17120-3a84-7d60-bff1-09de7650d77d",
+        "model": "gpt-6-luna"
+      },
+      "human_author": "xdewx <present150608@sina.com>"
+    }
+  }
+}
