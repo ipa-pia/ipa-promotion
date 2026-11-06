@@ -1,0 +1,14 @@
+docs/mcp-acceptance.md
+  h_6539c3a3cd32c4 7,9,11,13,25,53,85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e49595e5839e1614c431b9858e9374c575c05347",
+  "prompts": {},
+  "humans": {
+    "h_6539c3a3cd32c4": {
+      "author": "xdewx <present150608@sina.com>"
+    }
+  }
+}
